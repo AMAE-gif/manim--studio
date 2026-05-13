@@ -91,8 +91,15 @@ def get_required_user(authorization: str | None = Header(default=None)) -> UUID:
     return uid
 
 
+class LlmConfig(BaseModel):
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+
+
 class GenerateBody(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=4000)
+    llm: LlmConfig | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -116,16 +123,16 @@ def _ensure_scene(code: str) -> str:
     return code
 
 
-def generate_manim_code(user_prompt: str) -> str:
-    api_key = os.environ.get("OPENAI_API_KEY")
+def generate_manim_code(user_prompt: str, llm: LlmConfig | None = None) -> str:
+    api_key = (llm.api_key if llm and llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=503,
-            detail="未配置 OPENAI_API_KEY，无法将自然语言转为代码。",
+            detail="未配置 API Key。请在设置中填写你的 LLM API Key，或在后端环境变量中设置 OPENAI_API_KEY。",
         )
-    base_url = os.environ.get("OPENAI_BASE_URL")
+    base_url = (llm.base_url if llm and llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
     client = OpenAI(api_key=api_key, base_url=base_url or None)
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    model = (llm.model if llm and llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
     try:
         completion = client.chat.completions.create(
             model=model,
@@ -159,7 +166,7 @@ def api_generate(
     body: GenerateBody,
     user_id: UUID | None = Depends(get_optional_user),
 ):
-    code = generate_manim_code(body.prompt)
+    code = generate_manim_code(body.prompt, body.llm)
     job_id = str(uuid.uuid4())
     job_dir = WORKDIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -339,11 +346,12 @@ def health():
     sb = get_supabase_admin()
     checks = {
         "llm_configured": has_key,
+        "llm_client_configurable": True,
         "manim_cli": manim_ok,
         "supabase_service_configured": sb is not None,
         "supabase_jwt_configured": bool((os.environ.get("SUPABASE_JWT_SECRET") or "").strip()),
     }
-    all_ok = all(v is True for v in checks.values())
+    all_ok = manim_ok and (sb is not None)
     return {
         "status": "healthy" if all_ok else "degraded",
         "uptime_seconds": int(time.time() - _start_time),

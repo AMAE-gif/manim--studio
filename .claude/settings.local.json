@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx shadcn@latest init --defaults)",
+      "Bash(npx shadcn@latest add input textarea card badge dialog dropdown-menu separator scroll-area -y)",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(cmd.exe /c \"where vercel\")",
+      "Bash(cmd.exe /c \"where railway\")",
+      "Bash(cmd.exe /c \"where supabase\")",
+      "Bash(vercel whoami *)",
+      "Bash(railway whoami *)",
+      "Bash(vercel login *)",
+      "Bash(USER=vercel-user COMPUTERNAME=PC vercel login *)",
+      "Bash(USERNAME=testuser vercel login *)",
+      "Bash(railway login *)",
+      "Bash(curl *)",
+      "Bash(python -m json.tool)",
+      "Bash(python -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(f'{p[\\\\\"name\\\\\"]} \\(id: {p[\\\\\"id\\\\\"]}, framework: {p.get\\(\\\\\"framework\\\\\",\\\\\"N/A\\\\\"\\)}, domains: {[d[\\\\\"domain\\\\\"] for d in p.get\\(\\\\\"targets\\\\\",{}\\).get\\(\\\\\"production\\\\\",{}\\).get\\(\\\\\"alias\\\\\",[]\\)][:3]}\\)'\\) for p in data.get\\('projects',[]\\)]\")",
+      "Bash(python -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(f'{p[\\\\\"name\\\\\"]} \\(id: {p[\\\\\"id\\\\\"]}, framework: {p.get\\(\\\\\"framework\\\\\",\\\\\"N/A\\\\\"\\)}\\)'\\) for p in data.get\\('projects',[]\\)]\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Deployment: {d.get\\(\\\\\"id\\\\\",\\\\\"?\\\\\"\\)}, URL: {d.get\\(\\\\\"url\\\\\",\\\\\"?\\\\\"\\)}, state: {d.get\\(\\\\\"state\\\\\",\\\\\"?\\\\\"\\)}'\\)\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d[k] for k in ['id','url','state','readyState','createdAt'] if k in d}, indent=2\\)\\)\")",
+      "Bash(python -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\(d.get\\('id','ERROR'\\), d.get\\('key',''\\)\\)\")",
+      "Bash(python -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\(f'Deploy: {d.get\\(\\\\\"id\\\\\",\\\\\"?\\\\\"\\)}, URL: {d.get\\(\\\\\"url\\\\\",\\\\\"?\\\\\"\\)}, state: {d.get\\(\\\\\"readyState\\\\\",\\\\\"?\\\\\"\\)}'\\)\")"
+    ]
+  }
+}

@@ -10,6 +10,8 @@ import { PromptPanel } from "./components/PromptPanel";
 import { CodeEditor } from "./components/CodeEditor";
 import { VideoPreview } from "./components/VideoPreview";
 import { StatusBar } from "./components/StatusBar";
+import { loadLlmConfig } from "./components/SettingsDialog";
+import type { LlmConfig } from "./components/SettingsDialog";
 
 export default function App() {
   const [prompt, setPrompt] = useState(
@@ -25,6 +27,7 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [llmConfig, setLlmConfig] = useState<LlmConfig>(loadLlmConfig);
 
   const token = session?.access_token ?? null;
 
@@ -83,7 +86,15 @@ export default function App() {
     try {
       const r = await apiFetch(
         "/api/generate",
-        { method: "POST", body: JSON.stringify({ prompt }) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            prompt,
+            llm: llmConfig.apiKey
+              ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model }
+              : null,
+          }),
+        },
         token
       );
       const data = await r.json().catch(() => ({}));
@@ -223,7 +234,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
-      <Header health={health} />
+      <Header health={health} onLlmConfigChange={setLlmConfig} />
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar toggle for small screens */}
