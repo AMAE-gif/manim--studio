@@ -1,0 +1,351 @@
+"""
+在线 Manim：自然语言生成场景代码并渲染为视频预览。
+可选：Supabase（项目表 + Storage MP4）；自定义前端域名通过环境变量 ALLOWED_ORIGINS。
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+import shutil
+import subprocess
+import time
+import uuid
+from pathlib import Path
+from uuid import UUID
+
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from openai import OpenAI
+from pydantic import BaseModel, Field
+
+from supabase_sync import (
+    decode_user_id_from_jwt,
+    get_project_for_user,
+    get_supabase_admin,
+    insert_project,
+    list_user_projects,
+    parse_bearer_header,
+    public_object_url,
+    update_project_code,
+    update_project_rendered,
+    upload_render_mp4,
+)
+
+log = logging.getLogger(__name__)
+_start_time = time.time()
+
+SCENE_CLASS = "GeneratedScene"
+
+SYSTEM_PROMPT = f"""你是 Manim Community Edition 专家。用户用自然语言描述动画，你输出**完整可运行**的 Python 文件内容。
+
+硬性要求：
+1. 第一行必须是：from manim import *
+2. 必须定义 class {SCENE_CLASS}(Scene):
+3. 只使用 manim 社区版公开 API，不要虚构类名。
+4. construct(self) 内完成动画；总时长尽量控制在 15 秒以内（用 self.wait 控制）。
+5. 不要 markdown 代码块，不要解释文字，只输出纯 Python 源码。
+6. 使用较快的默认：简单图形、Text/Markup 时注意字号适中（约 36–48）。
+7. 若需要数学公式，优先使用 MathTex 或 Tex，避免不存在的 LaTeX 包。
+"""
+
+
+def _allowed_cors_origins() -> list[str]:
+    raw = os.environ.get("ALLOWED_ORIGINS", "")
+    extra = [x.strip() for x in raw.split(",") if x.strip()]
+    base = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    merged = base + extra
+    return list(dict.fromkeys(merged))
+
+
+app = FastAPI(title="Manim NL Studio API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+WORKDIR = Path(__file__).resolve().parent / "renders"
+WORKDIR.mkdir(exist_ok=True)
+
+
+def get_optional_user(authorization: str | None = Header(default=None)) -> UUID | None:
+    token = parse_bearer_header(authorization)
+    if not token:
+        return None
+    return decode_user_id_from_jwt(token)
+
+
+def get_required_user(authorization: str | None = Header(default=None)) -> UUID:
+    token = parse_bearer_header(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="请先登录（Supabase）")
+    uid = decode_user_id_from_jwt(token)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="登录已失效，请重新登录")
+    return uid
+
+
+class GenerateBody(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=4000)
+
+
+class GenerateResponse(BaseModel):
+    code: str
+    job_id: str
+
+
+def _strip_code_fences(text: str) -> str:
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:python)?\s*", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\s*```\s*$", "", t)
+    return t.strip()
+
+
+def _ensure_scene(code: str) -> str:
+    if SCENE_CLASS not in code:
+        raise ValueError(f"模型输出必须包含 class {SCENE_CLASS}(Scene)")
+    if "from manim import" not in code:
+        raise ValueError("必须包含 from manim import")
+    return code
+
+
+def generate_manim_code(user_prompt: str) -> str:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="未配置 OPENAI_API_KEY，无法将自然语言转为代码。",
+        )
+    base_url = os.environ.get("OPENAI_BASE_URL")
+    client = OpenAI(api_key=api_key, base_url=base_url or None)
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    try:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM 调用失败: {e!s}") from e
+
+    raw = completion.choices[0].message.content or ""
+    code = _strip_code_fences(raw)
+    try:
+        return _ensure_scene(code)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+def find_manim_video(job_dir: Path) -> Path | None:
+    media = job_dir / "media" / "videos"
+    if not media.exists():
+        return None
+    mp4s = sorted(media.rglob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return mp4s[0] if mp4s else None
+
+
+@app.post("/api/generate", response_model=GenerateResponse)
+def api_generate(
+    body: GenerateBody,
+    user_id: UUID | None = Depends(get_optional_user),
+):
+    code = generate_manim_code(body.prompt)
+    job_id = str(uuid.uuid4())
+    job_dir = WORKDIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    script_path = job_dir / "scene.py"
+    script_path.write_text(code, encoding="utf-8")
+
+    sb = get_supabase_admin()
+    if sb is not None and user_id is not None:
+        try:
+            insert_project(
+                sb,
+                user_id=user_id,
+                job_id=job_id,
+                prompt=body.prompt,
+                code=code,
+            )
+        except Exception as e:
+            log.warning("Supabase insert_project 失败（仍返回本地 job）: %s", e)
+
+    return GenerateResponse(code=code, job_id=job_id)
+
+
+class RenderBody(BaseModel):
+    job_id: str
+    code: str | None = None
+
+
+@app.post("/api/render")
+def api_render(
+    body: RenderBody,
+    user_id: UUID | None = Depends(get_optional_user),
+):
+    job_dir = WORKDIR / body.job_id
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="job_id 不存在，请先生成")
+
+    script_path = job_dir / "scene.py"
+    if body.code is not None:
+        try:
+            script_path.write_text(_ensure_scene(_strip_code_fences(body.code)), encoding="utf-8")
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
+    sb = get_supabase_admin()
+    if sb is not None and user_id is not None:
+        try:
+            update_project_code(sb, body.job_id, script_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            log.warning("Supabase update_project_code 失败: %s", e)
+
+    cmd = [
+        "manim",
+        "render",
+        "-ql",
+        str(script_path),
+        SCENE_CLASS,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(job_dir),
+            capture_output=True,
+            text=True,
+            timeout=int(os.environ.get("MANIM_TIMEOUT_SEC", "120")),
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="未找到 manim 命令，请先安装：pip install manim",
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="渲染超时，请简化描述后重试")
+
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "")[-8000:]
+        raise HTTPException(status_code=400, detail=f"Manim 渲染失败:\n{err}")
+
+    video = find_manim_video(job_dir)
+    if not video:
+        raise HTTPException(status_code=500, detail="未找到输出视频，请检查 manim 版本与场景类名")
+
+    video_url = f"/api/video/{body.job_id}"
+    if sb is not None and user_id is not None:
+        storage_path = f"{user_id}/{body.job_id}.mp4"
+        try:
+            upload_render_mp4(sb, video, storage_path)
+            update_project_rendered(sb, body.job_id, storage_path)
+            video_url = public_object_url(storage_path)
+        except Exception as e:
+            log.warning("Supabase 上传/更新失败，回退为本地 URL: %s", e)
+
+    return {"ok": True, "video_url": video_url}
+
+
+@app.get("/api/video/{job_id}")
+def api_video(job_id: str):
+    job_dir = WORKDIR / job_id
+    found = find_manim_video(job_dir)
+    if not found or not found.is_file():
+        raise HTTPException(status_code=404, detail="视频不存在或已清理")
+    return FileResponse(
+        path=str(found),
+        media_type="video/mp4",
+        filename=f"preview_{job_id}.mp4",
+    )
+
+
+@app.delete("/api/job/{job_id}")
+def api_delete_job(job_id: str):
+    job_dir = WORKDIR / job_id
+    if job_dir.is_dir():
+        shutil.rmtree(job_dir, ignore_errors=True)
+    return {"ok": True}
+
+
+@app.get("/api/projects")
+def api_projects(user_id: UUID = Depends(get_required_user)):
+    sb = get_supabase_admin()
+    if sb is None:
+        raise HTTPException(status_code=503, detail="服务器未配置 Supabase Service Role")
+    return {"items": list_user_projects(sb, user_id)}
+
+
+@app.get("/api/project/{job_id}")
+def api_project_detail(job_id: str, user_id: UUID = Depends(get_required_user)):
+    sb = get_supabase_admin()
+    if sb is None:
+        raise HTTPException(status_code=503, detail="服务器未配置 Supabase Service Role")
+    row = get_project_for_user(sb, user_id, job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="未找到该项目")
+    return row
+
+
+class RenameBody(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=4000)
+
+
+@app.patch("/api/project/{job_id}")
+def api_rename_project(job_id: str, body: RenameBody, user_id: UUID = Depends(get_required_user)):
+    sb = get_supabase_admin()
+    if sb is None:
+        raise HTTPException(status_code=503, detail="服务器未配置 Supabase Service Role")
+    sb.table("manim_projects").update({"prompt": body.prompt}).eq("job_id", job_id).eq("user_id", str(user_id)).execute()
+    return {"ok": True}
+
+
+@app.delete("/api/project/{job_id}")
+def api_delete_project(job_id: str, user_id: UUID = Depends(get_required_user)):
+    sb = get_supabase_admin()
+    if sb is None:
+        raise HTTPException(status_code=503, detail="服务器未配置 Supabase Service Role")
+    row = get_project_for_user(sb, user_id, job_id)
+    if row and row.get("storage_object_path"):
+        try:
+            sb.storage.from_("renders").remove([row["storage_object_path"]])
+        except Exception:
+            pass
+    sb.table("manim_projects").delete().eq("job_id", job_id).eq("user_id", str(user_id)).execute()
+    job_dir = WORKDIR / job_id
+    if job_dir.is_dir():
+        shutil.rmtree(job_dir, ignore_errors=True)
+    return {"ok": True}
+
+
+@app.on_event("startup")
+async def log_cors_origins():
+    log.info("CORS allowed origins: %s", _allowed_cors_origins())
+
+
+@app.get("/api/health")
+def health():
+    has_key = bool(os.environ.get("OPENAI_API_KEY"))
+    manim_ok = shutil.which("manim") is not None
+    sb = get_supabase_admin()
+    checks = {
+        "llm_configured": has_key,
+        "manim_cli": manim_ok,
+        "supabase_service_configured": sb is not None,
+        "supabase_jwt_configured": bool((os.environ.get("SUPABASE_JWT_SECRET") or "").strip()),
+    }
+    all_ok = all(v is True for v in checks.values())
+    return {
+        "status": "healthy" if all_ok else "degraded",
+        "uptime_seconds": int(time.time() - _start_time),
+        **checks,
+    }
