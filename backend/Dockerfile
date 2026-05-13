@@ -1,16 +1,16 @@
 FROM python:3.11-slim
 
-# System deps: FFmpeg + LaTeX (for MathTex) + Cairo/Pango (for Text/Markup)
+# System deps: FFmpeg + minimal LaTeX + Cairo/Pango (for Text/Markup)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    texlive-latex-base texlive-latex-extra texlive-fonts-extra \
+    texlive-latex-base texlive-latex-recommended \
     libcairo2-dev libpango1.0-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
+COPY backend/ .
 RUN mkdir -p /app/renders
 
 EXPOSE 8000
