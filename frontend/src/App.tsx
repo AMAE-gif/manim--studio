@@ -6,7 +6,6 @@ import type { Health, ProjectRow } from "./lib/types";
 import { submitAndStreamAgent, submitAndStreamTeacher } from "./lib/sse";
 import { agentReducer, initialState } from "./lib/agent-store";
 import type { AgentPlan } from "./lib/agent-store";
-import type { VisionConfig } from "./components/SettingsDialog";
 
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
@@ -17,7 +16,7 @@ import { CodeEditor } from "./components/CodeEditor";
 import { VideoPreview } from "./components/VideoPreview";
 import { StatusBar } from "./components/StatusBar";
 import { loadLlmConfig, resolveVisionConfig } from "./components/SettingsDialog";
-import type { LlmConfig } from "./components/SettingsDialog";
+import type { LlmConfig, VisionConfig } from "./components/SettingsDialog";
 
 export default function App() {
   const [prompt, setPrompt] = useState(
@@ -33,12 +32,13 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [llmConfig, setLlmConfig] = useState<LlmConfig>(loadLlmConfig);
-  const [visionConfig, setVisionConfig] = useState<VisionConfig>({
-    useSameAsCode: true,
-    apiKey: "",
-    baseUrl: "https://api.openai.com/v1",
-    model: "gpt-4o",
+  const [llmConfig, setLlmConfig] = useState<LlmConfig>(() => {
+    const s = loadLlmConfig();
+    return { apiKey: s.providers.find((p) => p.id === s.activeProviderId)?.apiKey || "", baseUrl: s.providers.find((p) => p.id === s.activeProviderId)?.baseUrl || "https://api.openai.com/v1", model: s.activeModel };
+  });
+  const [visionConfig, setVisionConfig] = useState<VisionConfig>(() => {
+    const s = loadLlmConfig();
+    return s.vision;
   });
   const [mode, setMode] = useState<"simple" | "agent" | "teacher">("agent");
 
