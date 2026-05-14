@@ -68,6 +68,9 @@ export interface AgentState {
   sessionId: string | null;
   refinementHistory: Array<{ instruction: string; stepIndex: number | null; timestamp: number }>;
   imageBase64: string | null;
+  // Validation
+  validationPassed: boolean;
+  validationError: string | null;
 }
 
 export interface SolutionStep {
@@ -126,6 +129,8 @@ export const initialState: AgentState = {
   sessionId: null,
   refinementHistory: [],
   imageBase64: null,
+  validationPassed: false,
+  validationError: null,
 };
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -164,7 +169,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, plan: action.plan };
 
     case "CODE_GENERATED":
-      return { ...state, code: action.code };
+      return { ...state, code: action.code, validationPassed: false, validationError: null };
 
     case "VALIDATION_RESULT": {
       const steps = [...state.steps];
@@ -174,7 +179,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         last.passed = action.passed;
         if (action.error) last.error = action.error;
       }
-      return { ...state, steps, code: action.passed !== false ? state.code : state.code };
+      return { ...state, steps, validationPassed: action.passed, validationError: action.error || null };
     }
 
     case "RENDER_RESULT": {
@@ -200,6 +205,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         videoUrl: action.videoUrl ?? state.videoUrl,
         jobId: action.jobId,
         currentStep: null,
+        validationPassed: true,  // Backend only sends complete if validation passed
       };
 
     case "ERROR":

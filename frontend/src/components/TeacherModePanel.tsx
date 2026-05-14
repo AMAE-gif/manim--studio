@@ -192,8 +192,12 @@ export function TeacherModePanel({
 
       {/* Code status */}
       {hasCode && !hasSolution && (
-        <div className="text-[12px] text-green-400/70 bg-green-500/10 rounded-lg px-3 py-2">
-          代码已生成，显示在右侧编辑器中。请审查后点击「生成动画」。
+        <div className={`text-[12px] rounded-lg px-3 py-2 ${agentState.validationPassed ? "text-green-400/70 bg-green-500/10" : agentState.validationError ? "text-red-400/70 bg-red-500/10" : "text-yellow-400/70 bg-yellow-500/10"}`}>
+          {agentState.validationPassed
+            ? "代码已生成，语法验证通过。请审查后点击「生成动画」。"
+            : agentState.validationError
+              ? `代码语法错误：${agentState.validationError}`
+              : "代码已生成，正在验证..."}
         </div>
       )}
 
@@ -238,7 +242,7 @@ export function TeacherModePanel({
             </Button>
             <Button
               onClick={onRender}
-              disabled={busy}
+              disabled={busy || !agentState.validationPassed}
               className="flex-1 h-10 text-[14px] font-semibold"
             >
               <Film className="h-4 w-4 mr-2" />
