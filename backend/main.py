@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -21,7 +22,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from agent import analyze_image_style, run_agent_workflow
+from agent import analyze_image_style, run_agent_workflow, submit_job, get_job, get_queue_info
 from agent.models import AgentGenerateBody, VisionLlmConfig
 
 from supabase_sync import (
@@ -414,3 +415,96 @@ async def api_analyze_style(
     image_bytes = await file.read()
     style_text = await analyze_image_style(image_bytes, file.content_type or "image/png", config)
     return {"style_analysis": style_text}
+
+
+# ── 异步任务队列端点 ──────────────────────────────────────────────
+
+
+@app.post("/api/agent/submit")
+async def api_agent_submit(body: AgentGenerateBody):
+    """Submit an agent job to the queue. Returns job_id immediately."""
+    from agent.models import LlmConfig
+
+    llm = body.llm
+    job_id, pending = await submit_job(
+        prompt=body.prompt,
+        llm_config=llm,
+        style_analysis=body.style_analysis,
+        rules=body.rules,
+        max_retries=body.max_retries,
+    )
+    return {
+        "job_id": job_id,
+        "queue_position": pending,
+        "status": "pending",
+    }
+
+
+@app.get("/api/agent/status/{job_id}")
+async def api_agent_status(job_id: str):
+    """Poll job status."""
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "code": job.code,
+        "video_url": job.video_url,
+        "error": job.error,
+        "events_count": len(job.events),
+    }
+
+
+@app.get("/api/agent/stream/{job_id}")
+async def api_agent_stream(job_id: str):
+    """SSE stream for a specific job. Replays past events, then streams live."""
+    import json as _json
+
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    async def event_generator():
+        replayed = 0
+        while True:
+            # Replay any new events since last check
+            while replayed < len(job.events):
+                event = job.events[replayed]
+                event_type = event["event"]
+                event_data = _json.dumps(event["data"], ensure_ascii=False)
+                yield f"event: {event_type}\ndata: {event_data}\n\n"
+                replayed += 1
+
+            # If job is done, send done event and close
+            if job.status in ("complete", "error"):
+                yield "event: done\ndata: {}\n\n"
+                return
+
+            # Wait for new events (with timeout to prevent hanging)
+            listener = asyncio.Event()
+            job._listeners.append(listener)
+            try:
+                await asyncio.wait_for(listener.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                # Send keepalive comment
+                yield ": keepalive\n\n"
+            finally:
+                if listener in job._listeners:
+                    job._listeners.remove(listener)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/agent/queue")
+async def api_agent_queue():
+    """Get queue status."""
+    return get_queue_info()

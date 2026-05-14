@@ -1,4 +1,4 @@
-/** POST-based SSE client (browser EventSource only supports GET). */
+/** SSE client for Agent workflow — supports both sync stream and async submit+stream. */
 
 import { apiPath } from "./api";
 
@@ -39,15 +39,60 @@ function dispatchEvent(eventType: string, data: Record<string, unknown>, callbac
   }
 }
 
+function parseSSEStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  callbacks: SSECallbacks,
+): Promise<void> {
+  let buffer = "";
+
+  function processLine(line: string, currentEvent: string): string {
+    if (line.startsWith("event: ")) {
+      return line.slice(7).trim();
+    }
+    if (line.startsWith("data: ")) {
+      const dataStr = line.slice(6);
+      if (currentEvent === "done") {
+        callbacks.onDone?.();
+        return currentEvent;
+      }
+      try {
+        const data = JSON.parse(dataStr);
+        dispatchEvent(currentEvent, data, callbacks);
+      } catch {
+        // skip malformed JSON
+      }
+    }
+    return currentEvent;
+  }
+
+  return (async () => {
+    let currentEvent = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        currentEvent = processLine(line, currentEvent);
+        if (currentEvent === "done") return;
+      }
+    }
+    callbacks.onDone?.();
+  })();
+}
+
+/** Sync mode: POST to /api/agent/generate, stream results directly. */
 export async function streamAgentGenerate(
   body: Record<string, unknown>,
   callbacks: SSECallbacks,
   accessToken?: string | null,
 ): Promise<void> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`;
-  }
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
   const response = await fetch(apiPath("/api/agent/generate"), {
     method: "POST",
@@ -63,36 +108,47 @@ export async function streamAgentGenerate(
 
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
+  await parseSSEStream(reader, decoder, callbacks);
+}
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+/** Async mode: submit job → get job_id → stream via /api/agent/stream/{job_id}. */
+export async function submitAndStreamAgent(
+  body: Record<string, unknown>,
+  callbacks: SSECallbacks,
+  accessToken?: string | null,
+): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
-    buffer += decoder.decode(value, { stream: true });
+  // Step 1: Submit job
+  const submitRes = await fetch(apiPath("/api/agent/submit"), {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
 
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    let currentEvent = "";
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith("data: ")) {
-        const dataStr = line.slice(6);
-        if (currentEvent === "done") {
-          callbacks.onDone?.();
-          return;
-        }
-        try {
-          const data = JSON.parse(dataStr);
-          dispatchEvent(currentEvent, data, callbacks);
-        } catch {
-          // skip malformed JSON
-        }
-      }
-    }
+  if (!submitRes.ok) {
+    const err = await submitRes.json().catch(() => ({}));
+    callbacks.onError?.({ message: err.detail || "提交任务失败" });
+    return;
   }
 
-  callbacks.onDone?.();
+  const { job_id } = await submitRes.json();
+
+  // Step 2: Stream results via SSE
+  const streamHeaders: Record<string, string> = {};
+  if (accessToken) streamHeaders["Authorization"] = `Bearer ${accessToken}`;
+
+  const streamRes = await fetch(apiPath(`/api/agent/stream/${job_id}`), {
+    headers: streamHeaders,
+  });
+
+  if (!streamRes.ok) {
+    callbacks.onError?.({ message: "无法连接到任务流" });
+    return;
+  }
+
+  const reader = streamRes.body!.getReader();
+  const decoder = new TextDecoder();
+  await parseSSEStream(reader, decoder, callbacks);
 }

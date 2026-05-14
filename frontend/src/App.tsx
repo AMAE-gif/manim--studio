@@ -3,7 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import { apiFetch, resolveMediaUrl } from "./lib/api";
 import { supabase } from "./lib/supabase";
 import type { Health, ProjectRow } from "./lib/types";
-import { streamAgentGenerate } from "./lib/sse";
+import { submitAndStreamAgent } from "./lib/sse";
 import { agentReducer, initialState } from "./lib/agent-store";
 import type { VisionConfig } from "./components/SettingsDialog";
 
@@ -132,7 +132,7 @@ export default function App() {
     setVideoUrl(null);
     agentDispatch({ type: "RESET" });
 
-    await streamAgentGenerate(
+    await submitAndStreamAgent(
       {
         prompt,
         llm: llmConfig.apiKey
