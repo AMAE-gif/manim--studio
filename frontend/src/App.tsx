@@ -263,11 +263,12 @@ export default function App() {
           }
         },
         onComplete: (data) => {
-          agentDispatch({ type: "COMPLETE", code: data.code, videoUrl: data.video_url, jobId: data.job_id });
+          agentDispatch({ type: "COMPLETE", code: data.code, jobId: data.job_id });
           if (data.session_id) {
             agentDispatch({ type: "SET_SESSION_ID", sessionId: data.session_id });
           }
-          setStatus("动画生成完成。");
+          setCode(data.code);
+          setStatus("代码已生成，请审查后点击「生成动画」渲染视频。");
         },
         onError: (data) => {
           agentDispatch({ type: "ERROR", message: data.message });

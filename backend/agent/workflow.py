@@ -473,32 +473,15 @@ async def run_teacher_workflow(
         yield {"event": "error", "data": {"message": f"语法错误: {syntax_ok.get('error', 'unknown')}", "recoverable": False}}
         return
 
-    # Save and render
+    # Save code (user will render manually after reviewing)
     script_path = job_dir / "scene.py"
     script_path.write_text(code, encoding="utf-8")
-
-    yield _event("render_test", "正在渲染视频...")
-    t_render = time.time()
-
-    render_result = await render_animation(code, job_id)
-
-    yield {
-        "event": "render_result",
-        "data": {
-            "passed": render_result["passed"],
-            "error": render_result.get("error"),
-            "video_url": render_result.get("video_url"),
-            "duration": round(time.time() - t_render, 1),
-        },
-    }
-
-    video_url = render_result.get("video_url") if render_result["passed"] else None
 
     yield {
         "event": "complete",
         "data": {
             "code": code,
-            "video_url": video_url,
+            "video_url": None,
             "job_id": job_id,
             "session_id": new_session_id,
             "total_duration": round(time.time() - t0, 1),
