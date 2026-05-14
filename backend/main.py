@@ -104,6 +104,7 @@ class LlmConfig(BaseModel):
 class GenerateBody(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=4000)
     llm: LlmConfig | None = None
+    code: str | None = None  # Pre-generated code from frontend (skip LLM call)
 
 
 class GenerateResponse(BaseModel):
@@ -192,7 +193,11 @@ async def api_generate(
     body: GenerateBody,
     user_id: UUID | None = Depends(get_optional_user),
 ):
-    code = await generate_manim_code(body.prompt, body.llm)
+    if body.code:
+        # Pre-generated code from frontend (skip LLM call)
+        code = _ensure_scene(_strip_code_fences(body.code))
+    else:
+        code = await generate_manim_code(body.prompt, body.llm)
     job_id = str(uuid.uuid4())
     job_dir = WORKDIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)

@@ -4,6 +4,7 @@ import { apiFetch, resolveMediaUrl } from "./lib/api";
 import { supabase } from "./lib/supabase";
 import type { Health, ProjectRow } from "./lib/types";
 import { submitAndStreamAgent, submitAndStreamTeacher } from "./lib/sse";
+import { callLLM } from "./lib/llm-client";
 import { agentReducer, initialState } from "./lib/agent-store";
 import type { AgentPlan } from "./lib/agent-store";
 
@@ -413,41 +414,75 @@ export default function App() {
     setBusy(false);
   };
 
-  // Simple mode generate (original)
+  // Simple mode — call LLM directly from browser (no backend proxy)
+  const SIMPLE_SYSTEM_PROMPT = `你是 Manim Community Edition 专家。用户用自然语言描述动画，你输出**完整可运行**的 Python 文件内容。
+
+硬性要求：
+1. 第一行必须是：from manim import *
+2. 必须定义 class GeneratedScene(Scene):
+3. 只使用 manim 社区版公开 API，不要虚构类名。
+4. construct(self) 内完成动画；总时长尽量控制在 15 秒以内（用 self.wait 控制）。
+5. 不要 markdown 代码块，不要解释文字，只输出纯 Python 源码。
+6. 使用较快的默认：简单图形、Text/Markup 时注意字号适中（约 36–48）。
+7. 若需要数学公式，优先使用 MathTex 或 Tex，避免不存在的 LaTeX 包。
+8. 中文文字必须用 Text()，绝对不能把中文放进 MathTex/Tex（LaTeX 不支持 Unicode 中文，会编译失败）。`;
+
   const onSimpleGenerate = async () => {
+    if (!llmConfig.apiKey) {
+      setStatus("请先在设置中配置 API Key。");
+      return;
+    }
     setBusy(true);
-    setStatus("正在根据描述生成 Manim 代码...");
+    setStatus("正在直接调用 LLM 生成代码...");
     setVideoUrl(null);
     try {
+      // Step 1: Call LLM directly from browser
+      const raw = await callLLM({
+        apiKey: llmConfig.apiKey,
+        baseUrl: llmConfig.baseUrl,
+        model: llmConfig.model,
+        apiFormat: llmConfig.apiFormat,
+        messages: [
+          { role: "system", content: SIMPLE_SYSTEM_PROMPT },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+      });
+
+      // Step 2: Strip code fences
+      let code = raw.trim();
+      if (code.startsWith("```")) {
+        code = code.split("\n", 1).slice(1).join("\n");
+        if (code.endsWith("```")) code = code.slice(0, -3);
+      }
+      code = code.trim();
+
+      // Step 3: Save to backend for rendering (just storage, no LLM call)
       const r = await apiFetch(
         "/api/generate",
         {
           method: "POST",
           body: JSON.stringify({
             prompt,
-            llm: llmConfig.apiKey
-              ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
-              : null,
+            llm: { api_key: "__direct__", base_url: "", model: "", api_format: "openai" },
+            code,  // Pass pre-generated code
           }),
         },
         token
       );
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setStatus(typeof data.detail === "string" ? data.detail : "生成失败");
+        // If backend fails, still show the code
+        setCode(code);
+        setStatus("代码已生成（后端保存失败，可编辑后手动渲染）。");
         return;
       }
-      setCode(data.code ?? "");
+      setCode(data.code ?? code);
       setJobId(data.job_id ?? null);
       setSelectedProjectId(data.job_id ?? null);
-      setStatus(
-        token
-          ? "代码已生成并写入 Supabase；可编辑后渲染。"
-          : "代码已生成。登录后可同步到 Supabase。"
-      );
-      void loadProjects();
+      setStatus("代码已生成。可编辑后点击渲染。");
     } catch (e) {
-      setStatus(`网络错误：${e instanceof Error ? e.message : String(e)}`);
+      setStatus(`生成失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
