@@ -274,12 +274,17 @@ export default function App() {
           }
         },
         onComplete: (data) => {
-          agentDispatch({ type: "COMPLETE", code: data.code, jobId: data.job_id });
+          agentDispatch({ type: "COMPLETE", code: data.code, videoUrl: data.video_url, jobId: data.job_id });
           if (data.session_id) {
             agentDispatch({ type: "SET_SESSION_ID", sessionId: data.session_id });
           }
           setCode(data.code);
-          setStatus("代码已生成，请审查后点击「生成动画」渲染视频。");
+          if (data.video_url) {
+            setVideoUrl(resolveMediaUrl(data.video_url, Date.now()));
+            setStatus("代码已生成并通过渲染验证，动画已就绪。");
+          } else {
+            setStatus("代码已生成，但预渲染失败。请检查代码后手动渲染。");
+          }
         },
         onError: (data) => {
           agentDispatch({ type: "ERROR", message: data.message });
