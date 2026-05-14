@@ -594,16 +594,17 @@ async def api_teacher_analyze(
     image_bytes = await file.read()
 
     _log.getLogger("teacher").info(
-        "Analyze RAW vision_llm: %s",
-        vision_llm[:500],
+        "Analyze RAW vision_llm (%d chars): %s",
+        len(vision_llm), vision_llm[:500],
     )
     _log.getLogger("teacher").info(
-        "Analyze PARSED - model: %s, base_url: %s, api_key_len: %d, image_size: %d",
-        config.model, config.base_url, len(config.api_key or ""), len(image_bytes),
+        "Analyze PARSED - model=%s, base_url=%s, api_key_len=%d, api_key_first4=%s, image_size=%d",
+        config.model, config.base_url, len(config.api_key or ""),
+        (config.api_key or "")[:4], len(image_bytes),
     )
 
     if not config.api_key:
-        return {"error": f"视觉模型 API Key 未配置。收到的配置: model={config.model}, base_url={config.base_url}, api_key为空。请在设置中勾选'使用与代码模型相同的API Key'，或单独填写视觉模型的 API Key。"}
+        return {"error": f"视觉模型 API Key 未配置。收到的原始数据: {vision_llm[:300]}"}
 
     from agent.vision import extract_math_problem
     result = await extract_math_problem(image_bytes, file.content_type or "image/png", config)
