@@ -372,6 +372,40 @@ def debug_env():
     return result
 
 
+@app.post("/api/debug-vision")
+async def debug_vision(
+    file: UploadFile,
+    vision_llm: str = "{}",
+):
+    """Debug: test vision model with a simple request."""
+    import json as _json
+    import traceback
+    config = VisionLlmConfig.model_validate_json(vision_llm)
+    image_bytes = await file.read()
+
+    # Log config (no secrets)
+    log.info("Debug vision - model: %s, base_url: %s, api_key_len: %d, image_size: %d",
+             config.model, config.base_url, len(config.api_key or ""), len(image_bytes))
+
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url or None,
+            timeout=30.0,
+        )
+        response = await client.chat.completions.create(
+            model=config.model or "gpt-4o",
+            messages=[{"role": "user", "content": "say hello"}],
+            max_tokens=50,
+        )
+        return {"ok": True, "reply": response.choices[0].message.content, "model_used": config.model}
+    except Exception as e:
+        tb = traceback.format_exc()
+        log.error("Debug vision failed: %s\n%s", e, tb)
+        return {"ok": False, "error": str(e), "traceback": tb}
+
+
 # ── Agent 工作流端点 ──────────────────────────────────────────────
 
 
@@ -520,10 +554,24 @@ async def api_teacher_analyze(
 ):
     """Phase 1: Extract math problem from image."""
     import json as _json
+    import logging as _log
     config = VisionLlmConfig.model_validate_json(vision_llm)
     image_bytes = await file.read()
+
+    _log.getLogger("teacher").info(
+        "Analyze request - model: %s, base_url: %s, api_key_len: %d, image_size: %d, content_type: %s",
+        config.model, config.base_url, len(config.api_key or ""), len(image_bytes), file.content_type,
+    )
+
+    if not config.api_key:
+        return {"error": "视觉模型 API Key 未配置。请在设置中配置一个支持图像识别的模型（如 gpt-4o、qwen-vl-max）。"}
+
     from agent.vision import extract_math_problem
     result = await extract_math_problem(image_bytes, file.content_type or "image/png", config)
+
+    if "error" in result:
+        _log.getLogger("teacher").warning("Analyze error: %s", result["error"])
+
     return result
 
 
