@@ -24,10 +24,17 @@ const DEFAULT_CONFIG: LlmConfig = {
 };
 
 const PRESETS: Record<string, Partial<LlmConfig>> = {
-  OpenAI: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-  DeepSeek: { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
-  "通义千问": { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
-  SiliconFlow: { baseUrl: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-7B-Instruct" },
+  "OpenAI GPT-4o mini": { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  "OpenAI GPT-4o": { baseUrl: "https://api.openai.com/v1", model: "gpt-4o" },
+  "DeepSeek V3": { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  "DeepSeek R1": { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-reasoner" },
+  "通义千问 Plus": { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
+  "通义千问 Max": { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-max" },
+  "智谱 GLM-4": { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4" },
+  "智谱 GLM-4-Flash": { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
+  "月之暗面 Kimi": { baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
+  "硅基流动": { baseUrl: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-72B-Instruct" },
+  "Groq Llama": { baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
 };
 
 const STORAGE_KEY = "manim-studio-llm-config";
