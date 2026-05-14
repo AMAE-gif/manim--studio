@@ -51,6 +51,7 @@ const BUILT_IN_PROVIDERS: Omit<Provider, "id">[] = [
   { name: "月之暗面", baseUrl: "https://api.moonshot.cn/v1", apiKey: "", models: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"], apiFormat: "openai" },
   { name: "硅基流动", baseUrl: "https://api.siliconflow.cn/v1", apiKey: "", models: ["Qwen/Qwen2.5-72B-Instruct", "Qwen/Qwen2-VL-72B-Instruct", "deepseek-ai/DeepSeek-V3"], apiFormat: "openai" },
   { name: "Groq", baseUrl: "https://api.groq.com/openai/v1", apiKey: "", models: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"], apiFormat: "openai" },
+  { name: "小米 MiMo", baseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic", apiKey: "", models: ["mimo-v2.5"], apiFormat: "anthropic" },
 ];
 
 function generateId() {
@@ -104,14 +105,48 @@ function getActiveProvider(state: SettingsState): Provider | null {
   return state.providers.find((p) => p.id === state.activeProviderId) || null;
 }
 
+// Known vision models per provider (by base URL pattern)
+const KNOWN_VISION_MODELS: Record<string, string> = {
+  "openai.com": "gpt-4o",
+  "dashscope": "qwen-vl-max",
+  "aliyuncs": "qwen-vl-max",
+  "bigmodel.cn": "glm-4v",
+  "siliconflow": "Qwen/Qwen2-VL-72B-Instruct",
+  "xiaomimimo": "mimo-v2.5",
+  "moonshot": "",    // no vision
+  "deepseek": "",    // no vision
+  "groq": "",        // no vision
+};
+
+// User-learned vision model preferences (per base URL)
+const VISION_LEARN_KEY = "manim-studio-vision-learn";
+
+function loadVisionLearn(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(VISION_LEARN_KEY) || "{}"); } catch { return {}; }
+}
+
+function saveVisionLearn(map: Record<string, string>) {
+  localStorage.setItem(VISION_LEARN_KEY, JSON.stringify(map));
+}
+
+/** Remember that user chose this vision model for a given base URL. */
+export function learnVisionModel(baseUrl: string, model: string) {
+  const map = loadVisionLearn();
+  map[baseUrl] = model;
+  saveVisionLearn(map);
+}
+
 function guessVisionModel(baseUrl: string): string {
+  // 1. Check user-learned preference first
+  const learned = loadVisionLearn();
+  if (learned[baseUrl]) return learned[baseUrl];
+
+  // 2. Check known providers
   const url = baseUrl.toLowerCase();
-  if (url.includes("openai.com")) return "gpt-4o";
-  if (url.includes("dashscope") || url.includes("aliyuncs")) return "qwen-vl-max";
-  if (url.includes("bigmodel.cn")) return "glm-4v";
-  if (url.includes("siliconflow")) return "Qwen/Qwen2-VL-72B-Instruct";
-  // These providers don't support vision
-  return ""; // unknown — user must configure vision model separately
+  for (const [pattern, model] of Object.entries(KNOWN_VISION_MODELS)) {
+    if (url.includes(pattern)) return model;
+  }
+  return ""; // unknown
 }
 
 export function resolveVisionConfig(code: LlmConfig, vision: VisionConfig): { apiKey: string; baseUrl: string; model: string } {
@@ -120,7 +155,7 @@ export function resolveVisionConfig(code: LlmConfig, vision: VisionConfig): { ap
     if (model) {
       return { apiKey: code.apiKey, baseUrl: code.baseUrl, model };
     }
-    // Can't auto-detect vision model — fall back to vision config (user must configure separately)
+    // Can't auto-detect — fall back to vision config
     return { apiKey: vision.apiKey || code.apiKey, baseUrl: vision.baseUrl || code.baseUrl, model: vision.model || "" };
   }
   return { apiKey: vision.apiKey, baseUrl: vision.baseUrl, model: vision.model };
@@ -228,6 +263,10 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
   };
 
   const handleSave = () => {
+    // Learn: if user configured vision model separately, remember it for this provider
+    if (!settings.vision.useSameAsCode && settings.vision.model && activeProvider) {
+      learnVisionModel(activeProvider.baseUrl, settings.vision.model);
+    }
     saveSettings(settings);
     onConfigChange?.(getLlmConfig(settings));
     onVisionChange?.(settings.vision);
