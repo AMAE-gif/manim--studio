@@ -170,14 +170,14 @@ export default function App() {
 
       const formData = new FormData();
       formData.append("file", file);
-      const visionPayload = {
-        api_key: freshVision.apiKey,
-        base_url: freshVision.baseUrl || undefined,
-        model: freshVision.model || "gpt-4o",
-      };
-      console.log("Vision config sent:", { ...visionPayload, api_key: visionPayload.api_key ? "***" + visionPayload.api_key.slice(-4) : "(empty)" });
-      formData.append("vision_llm", JSON.stringify(visionPayload));
-      const r = await apiFetch("/api/teacher/analyze", { method: "POST", body: formData }, token);
+      // Send vision config as query params (FormData field gets lost in transmission)
+      const visionParams = new URLSearchParams();
+      if (freshVision.apiKey) visionParams.set("vision_api_key", freshVision.apiKey);
+      if (freshVision.baseUrl) visionParams.set("vision_base_url", freshVision.baseUrl);
+      if (freshVision.model) visionParams.set("vision_model", freshVision.model);
+      const qs = visionParams.toString();
+      const url = `/api/teacher/analyze${qs ? "?" + qs : ""}`;
+      const r = await apiFetch(url, { method: "POST", body: formData }, token);
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         setStatus(typeof data.detail === "string" ? data.detail : `题目识别失败 (HTTP ${r.status})`);

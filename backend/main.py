@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from openai import OpenAI
@@ -586,11 +586,22 @@ async def api_agent_queue():
 async def api_teacher_analyze(
     file: UploadFile,
     vision_llm: str = "{}",
+    vision_model: str = Query(default=""),
+    vision_base_url: str = Query(default=""),
+    vision_api_key: str = Query(default=""),
 ):
     """Phase 1: Extract math problem from image."""
     import json as _json
     import logging as _log
-    config = VisionLlmConfig.model_validate_json(vision_llm)
+
+    # Try form field first, then query params
+    if vision_llm and vision_llm != "{}":
+        config = VisionLlmConfig.model_validate_json(vision_llm)
+    elif vision_api_key:
+        config = VisionLlmConfig(api_key=vision_api_key, base_url=vision_base_url or None, model=vision_model or None)
+    else:
+        config = VisionLlmConfig()
+
     image_bytes = await file.read()
 
     _log.getLogger("teacher").info(
@@ -604,7 +615,7 @@ async def api_teacher_analyze(
     )
 
     if not config.api_key:
-        return {"error": f"视觉模型 API Key 未配置。收到的原始数据: {vision_llm[:300]}"}
+        return {"error": f"视觉模型 API Key 未配置。收到的原始数据: vision_llm={vision_llm[:200]}, query_params: model={vision_model}, base_url={vision_base_url}, api_key={'***' if vision_api_key else '(empty)'}"}
 
     from agent.vision import extract_math_problem
     result = await extract_math_problem(image_bytes, file.content_type or "image/png", config)
