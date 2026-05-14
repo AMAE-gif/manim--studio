@@ -1,9 +1,10 @@
-"""Core Agent workflow — async generator yielding SSE events."""
+"""Core Agent workflow — two-phase: Plan → Generate, with SSE events."""
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import AsyncGenerator
 from openai import AsyncOpenAI
 
 from .models import AnimationRules, LlmConfig
-from .prompts import SCENE_CLASS, build_system_prompt
+from .prompts import SCENE_CLASS, build_planning_prompt, build_code_prompt
 from .tools import (
     TOOL_DEFINITIONS,
     execute_tool,
@@ -28,6 +29,20 @@ log = logging.getLogger(__name__)
 
 def _event(step: str, message: str) -> dict:
     return {"event": "step_start", "data": {"step": step, "message": message}}
+
+
+def _extract_json_from_response(text: str) -> str:
+    """Try to extract JSON from LLM response, handling markdown fences."""
+    t = text.strip()
+    # Try to find JSON in code fences
+    m = re.search(r"```(?:json)?\s*\n(.*?)\n```", t, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # Try to find raw JSON object
+    m = re.search(r"\{.*\}", t, re.DOTALL)
+    if m:
+        return m.group(0)
+    return t
 
 
 async def run_agent_workflow(
@@ -52,15 +67,71 @@ async def run_agent_workflow(
     job_dir = WORKDIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    system_prompt = build_system_prompt(rules=rules, style_analysis=style_analysis)
-    messages: list[dict] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": prompt},
-    ]
-
-    # Step 1: PLAN
-    yield _event("plan", "正在分析请求...")
     t0 = time.time()
+
+    # ══════════════════════════════════════════════════════════════
+    # Phase 1: PLAN — understand the topic and design shots
+    # ══════════════════════════════════════════════════════════════
+    yield _event("plan", "正在分析主题并规划动画方案...")
+
+    planning_prompt = build_planning_prompt(rules=rules, style_analysis=style_analysis)
+
+    try:
+        plan_response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": planning_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.4,
+        )
+    except Exception as e:
+        yield {"event": "error", "data": {"message": f"规划阶段 LLM 调用失败: {e}", "recoverable": False}}
+        return
+
+    plan_raw = plan_response.choices[0].message.content or ""
+    plan_json_str = _extract_json_from_response(plan_raw)
+
+    # Parse the plan
+    try:
+        plan = json.loads(plan_json_str)
+        plan_title = plan.get("title", prompt[:30])
+        plan_summary = plan.get("summary", "")
+        shots = plan.get("shots", [])
+        total_duration = plan.get("total_duration", 15)
+    except json.JSONDecodeError:
+        # If JSON parsing fails, use the raw text as plan
+        plan = {"raw": plan_raw}
+        plan_title = prompt[:30]
+        plan_summary = plan_raw[:200]
+        shots = []
+        total_duration = 15
+
+    yield {
+        "event": "plan_ready",
+        "data": {
+            "title": plan_title,
+            "summary": plan_summary,
+            "shots": shots,
+            "total_duration": total_duration,
+            "raw": plan_raw,
+        },
+    }
+
+    # ══════════════════════════════════════════════════════════════
+    # Phase 2: GENERATE — write Manim code based on the plan
+    # ══════════════════════════════════════════════════════════════
+    code_prompt = build_code_prompt(
+        plan=plan_raw,
+        total_duration=total_duration,
+        rules=rules,
+        style_analysis=style_analysis,
+    )
+
+    messages: list[dict] = [
+        {"role": "system", "content": code_prompt},
+        {"role": "user", "content": f"请根据上面的方案，生成完整的 Manim 代码。方案标题：{plan_title}"},
+    ]
 
     syntax_retries = 0
     render_retries = 0
@@ -68,8 +139,8 @@ async def run_agent_workflow(
     video_url = None
 
     while True:
-        # Step 2: GENERATE
-        yield _event("generate", "正在生成代码...")
+        # GENERATE
+        yield _event("generate", "正在生成 Manim 代码...")
         t_gen = time.time()
 
         try:
@@ -81,7 +152,7 @@ async def run_agent_workflow(
                 temperature=0.3,
             )
         except Exception as e:
-            yield {"event": "error", "data": {"message": f"LLM 调用失败: {e}", "recoverable": False}}
+            yield {"event": "error", "data": {"message": f"代码生成 LLM 调用失败: {e}", "recoverable": False}}
             return
 
         # Handle tool calls
@@ -116,7 +187,7 @@ async def run_agent_workflow(
         code = extract_code_from_response(raw_content)
         yield {"event": "code_generated", "data": {"code": code, "duration": round(time.time() - t_gen, 1)}}
 
-        # Step 3: VALIDATE
+        # VALIDATE
         yield _event("validate", "正在检查语法...")
         t_val = time.time()
 
@@ -146,7 +217,7 @@ async def run_agent_workflow(
 
         final_code = code
 
-        # Step 4: RENDER TEST
+        # RENDER TEST
         yield _event("render_test", "正在测试渲染...")
         t_render = time.time()
 
@@ -183,6 +254,7 @@ async def run_agent_workflow(
             "code": final_code,
             "video_url": video_url,
             "job_id": job_id,
+            "plan": plan,
             "total_duration": round(time.time() - t0, 1),
         },
     }

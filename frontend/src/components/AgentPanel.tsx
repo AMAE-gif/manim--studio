@@ -89,6 +89,7 @@ export function AgentPanel({
       <AgentProgress
         status={agentState.status}
         steps={agentState.steps}
+        plan={agentState.plan}
         error={agentState.error}
       />
     </div>

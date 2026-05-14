@@ -29,6 +29,22 @@ export type AgentStatus =
   | "complete"
   | "error";
 
+export interface AgentPlan {
+  title: string;
+  summary: string;
+  shots: Array<{
+    id: number;
+    name: string;
+    duration: number;
+    description: string;
+    visual: string;
+    animation: string;
+    narration?: string;
+  }>;
+  totalDuration: number;
+  raw: string;
+}
+
 export interface AgentState {
   status: AgentStatus;
   steps: AgentStep[];
@@ -38,12 +54,14 @@ export interface AgentState {
   jobId: string | null;
   error: string | null;
   styleAnalysis: string;
+  plan: AgentPlan | null;
   rules: AnimationRules;
 }
 
 export type AgentAction =
   | { type: "STEP_START"; step: string; message: string }
   | { type: "STEP_END"; passed?: boolean; error?: string }
+  | { type: "PLAN_READY"; plan: AgentPlan }
   | { type: "CODE_GENERATED"; code: string }
   | { type: "VALIDATION_RESULT"; passed: boolean; error?: string }
   | { type: "RENDER_RESULT"; passed: boolean; videoUrl?: string; error?: string }
@@ -71,6 +89,7 @@ export const initialState: AgentState = {
   jobId: null,
   error: null,
   styleAnalysis: "",
+  plan: null,
   rules: initialRules,
 };
 
@@ -102,6 +121,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
       return { ...state, steps };
     }
+
+    case "PLAN_READY":
+      return { ...state, plan: action.plan };
 
     case "CODE_GENERATED":
       return { ...state, code: action.code };
@@ -157,7 +179,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, rules: { ...state.rules, ...action.rules } };
 
     case "RESET":
-      return initialState;
+      return { ...initialState, styleAnalysis: state.styleAnalysis, rules: state.rules };
 
     default:
       return state;

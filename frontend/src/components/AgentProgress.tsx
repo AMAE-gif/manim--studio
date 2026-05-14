@@ -1,9 +1,10 @@
-import { CheckCircle, Circle, AlertCircle, Loader2 } from "lucide-react";
-import type { AgentStep, AgentStatus } from "@/lib/agent-store";
+import { CheckCircle, Circle, AlertCircle, Loader2, Film } from "lucide-react";
+import type { AgentStep, AgentStatus, AgentPlan } from "@/lib/agent-store";
 
 interface AgentProgressProps {
   status: AgentStatus;
   steps: AgentStep[];
+  plan: AgentPlan | null;
   error: string | null;
 }
 
@@ -15,11 +16,38 @@ const STEP_LABELS: Record<string, string> = {
   correct: "自动修正",
 };
 
-export function AgentProgress({ status, steps, error }: AgentProgressProps) {
+export function AgentProgress({ status, steps, plan, error }: AgentProgressProps) {
   if (status === "idle" && steps.length === 0) return null;
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-3">
+      {/* Plan display */}
+      {plan && (
+        <div className="border border-border rounded-md p-3 space-y-2">
+          <div className="flex items-center gap-2 text-xs font-medium">
+            <Film className="h-3.5 w-3.5 text-primary" />
+            <span>{plan.title}</span>
+            <span className="text-muted-foreground ml-auto">{plan.totalDuration}s</span>
+          </div>
+          <p className="text-xs text-muted-foreground">{plan.summary}</p>
+          {plan.shots.length > 0 && (
+            <div className="space-y-1">
+              {plan.shots.map((shot) => (
+                <div key={shot.id} className="flex items-start gap-2 text-xs">
+                  <span className="text-primary font-mono shrink-0">{shot.id}.</span>
+                  <div className="min-w-0">
+                    <span className="font-medium">{shot.name}</span>
+                    <span className="text-muted-foreground ml-1">({shot.duration}s)</span>
+                    <p className="text-muted-foreground truncate">{shot.description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Step progress */}
       {steps.map((s, i) => {
         const done = s.endedAt !== undefined;
         const running = !done && i === steps.length - 1 && status !== "complete" && status !== "error";

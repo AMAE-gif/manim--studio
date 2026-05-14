@@ -5,6 +5,7 @@ import { supabase } from "./lib/supabase";
 import type { Health, ProjectRow } from "./lib/types";
 import { submitAndStreamAgent } from "./lib/sse";
 import { agentReducer, initialState } from "./lib/agent-store";
+import type { AgentPlan } from "./lib/agent-store";
 import type { VisionConfig } from "./components/SettingsDialog";
 
 import { Header } from "./components/Header";
@@ -150,6 +151,7 @@ export default function App() {
       },
       {
         onStepStart: (data) => agentDispatch({ type: "STEP_START", step: data.step, message: data.message }),
+        onPlanReady: (data) => agentDispatch({ type: "PLAN_READY", plan: { title: data.title, summary: data.summary, shots: data.shots as AgentPlan["shots"], totalDuration: data.total_duration, raw: data.raw } }),
         onCodeGenerated: (data) => agentDispatch({ type: "CODE_GENERATED", code: data.code }),
         onValidationResult: (data) => {
           agentDispatch({ type: "STEP_END", passed: data.passed, error: data.syntax_error });

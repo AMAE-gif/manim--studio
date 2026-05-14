@@ -4,6 +4,7 @@ import { apiPath } from "./api";
 
 export interface SSECallbacks {
   onStepStart?: (data: { step: string; message: string }) => void;
+  onPlanReady?: (data: { title: string; summary: string; shots: unknown[]; total_duration: number; raw: string }) => void;
   onCodeGenerated?: (data: { code: string; duration?: number }) => void;
   onValidationResult?: (data: { passed: boolean; syntax_error?: string; imports?: unknown; duration?: number }) => void;
   onRenderResult?: (data: { passed: boolean; error?: string; video_url?: string; duration?: number }) => void;
@@ -17,6 +18,9 @@ function dispatchEvent(eventType: string, data: Record<string, unknown>, callbac
   switch (eventType) {
     case "step_start":
       callbacks.onStepStart?.(data as { step: string; message: string });
+      break;
+    case "plan_ready":
+      callbacks.onPlanReady?.(data as { title: string; summary: string; shots: unknown[]; total_duration: number; raw: string });
       break;
     case "code_generated":
       callbacks.onCodeGenerated?.(data as { code: string; duration?: number });
