@@ -175,6 +175,7 @@ export default function App() {
       if (freshVision.apiKey) visionParams.set("vision_api_key", freshVision.apiKey);
       if (freshVision.baseUrl) visionParams.set("vision_base_url", freshVision.baseUrl);
       if (freshVision.model) visionParams.set("vision_model", freshVision.model);
+      visionParams.set("vision_api_format", freshVision.apiFormat || "openai");
       const qs = visionParams.toString();
       const url = `/api/teacher/analyze${qs ? "?" + qs : ""}`;
       const r = await apiFetch(url, { method: "POST", body: formData }, token);

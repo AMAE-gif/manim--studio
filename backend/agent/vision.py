@@ -4,9 +4,89 @@ from __future__ import annotations
 
 import base64
 
-from openai import AsyncOpenAI
-
 from .models import VisionLlmConfig
+
+
+async def _vision_llm_call(
+    system_prompt: str,
+    user_text: str,
+    image_bytes: bytes,
+    content_type: str,
+    llm_config: VisionLlmConfig,
+    max_tokens: int = 1500,
+    temperature: float = 0.1,
+) -> str:
+    """Unified vision LLM call supporting both OpenAI and Anthropic formats."""
+    import asyncio
+
+    api_key = llm_config.api_key
+    base_url = llm_config.base_url
+    model = llm_config.model or "gpt-4o"
+    api_format = llm_config.api_format or "openai"
+
+    b64_image = base64.b64encode(image_bytes).decode("utf-8")
+    mime_type = content_type or "image/png"
+
+    if api_format == "anthropic":
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=api_key, base_url=base_url or None)
+        response = await asyncio.wait_for(
+            client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": user_text},
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mime_type,
+                                    "data": b64_image,
+                                },
+                            },
+                        ],
+                    }
+                ],
+                temperature=temperature,
+            ),
+            timeout=30.0,
+        )
+        return response.content[0].text
+    else:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url or None, timeout=30.0)
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": user_text},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{b64_image}",
+                                    "detail": "high",
+                                },
+                            },
+                        ],
+                    },
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ),
+            timeout=30.0,
+        )
+        return response.choices[0].message.content or ""
+
 
 VISION_SYSTEM_PROMPT = """分析这张图片/帧的动画风格参考。提取以下信息：
 
@@ -28,52 +108,21 @@ async def analyze_image_style(
     content_type: str,
     llm_config: VisionLlmConfig,
 ) -> str:
-    import asyncio
-
-    api_key = llm_config.api_key
-    if not api_key:
+    if not llm_config.api_key:
         return "未配置视觉模型 API Key。"
 
-    client = AsyncOpenAI(
-        api_key=api_key,
-        base_url=llm_config.base_url or None,
-        timeout=30.0,
-    )
-
-    b64_image = base64.b64encode(image_bytes).decode("utf-8")
-    mime_type = content_type or "image/png"
-
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=llm_config.model or "gpt-4o",
-                messages=[
-                    {"role": "system", "content": VISION_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "分析这张图片的动画风格参考。"},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{b64_image}",
-                                    "detail": "high",
-                                },
-                            },
-                        ],
-                    },
-                ],
-                max_tokens=1000,
-                temperature=0.3,
-            ),
-            timeout=30.0,
+        return await _vision_llm_call(
+            system_prompt=VISION_SYSTEM_PROMPT,
+            user_text="分析这张图片的动画风格参考。",
+            image_bytes=image_bytes,
+            content_type=content_type,
+            llm_config=llm_config,
+            max_tokens=1000,
+            temperature=0.3,
         )
-    except asyncio.TimeoutError:
-        return "视觉模型调用超时（30秒）。"
     except Exception as e:
         return f"视觉模型调用失败: {e}"
-
-    return response.choices[0].message.content or "无法分析图片。"
 
 
 MATH_PROBLEM_PROMPT = """你是一个数学问题识别专家。仔细分析这张图片，提取其中的数学问题。
@@ -100,53 +149,23 @@ async def extract_math_problem(
     content_type: str,
     llm_config: VisionLlmConfig,
 ) -> dict:
-    import asyncio
     import json as _json
 
-    api_key = llm_config.api_key
-    if not api_key:
+    if not llm_config.api_key:
         return {"error": "未配置视觉模型 API Key。"}
 
-    client = AsyncOpenAI(
-        api_key=api_key,
-        base_url=llm_config.base_url or None,
-        timeout=30.0,
-    )
-
-    b64_image = base64.b64encode(image_bytes).decode("utf-8")
-    mime_type = content_type or "image/png"
-
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=llm_config.model or "gpt-4o",
-                messages=[
-                    {"role": "system", "content": MATH_PROBLEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "提取这张图片中的数学题目。"},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{b64_image}",
-                                    "detail": "high",
-                                },
-                            },
-                        ],
-                    },
-                ],
-                max_tokens=1500,
-                temperature=0.1,
-            ),
-            timeout=30.0,
+        raw = await _vision_llm_call(
+            system_prompt=MATH_PROBLEM_PROMPT,
+            user_text="提取这张图片中的数学题目。",
+            image_bytes=image_bytes,
+            content_type=content_type,
+            llm_config=llm_config,
+            max_tokens=1500,
+            temperature=0.1,
         )
-    except asyncio.TimeoutError:
-        return {"error": "视觉模型调用超时（30秒），请检查 API 配置或换一个模型。"}
     except Exception as e:
         return {"error": f"视觉模型调用失败: {e}"}
-
-    raw = response.choices[0].message.content or ""
     # Strip markdown fences if present
     text = raw.strip()
     if text.startswith("```"):

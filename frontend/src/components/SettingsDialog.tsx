@@ -23,6 +23,7 @@ export interface VisionConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  apiFormat: "openai" | "anthropic";
 }
 
 interface Provider {
@@ -76,7 +77,7 @@ function loadSettings(): SettingsState {
           }],
           activeProviderId: null,
           activeModel: parsed.model || "gpt-4o-mini",
-          vision: parsed.vision || { useSameAsCode: true, apiKey: "", baseUrl: "https://api.openai.com/v1", model: "gpt-4o" },
+          vision: parsed.vision || { useSameAsCode: true, apiKey: "", baseUrl: "https://api.openai.com/v1", model: "gpt-4o", apiFormat: "openai" },
         };
       }
       // Migrate: add apiFormat to providers that don't have it
@@ -86,6 +87,10 @@ function loadSettings(): SettingsState {
           apiFormat: p.apiFormat || "openai",
         }));
       }
+      // Migrate: add apiFormat to vision config
+      if (parsed.vision && !parsed.vision.apiFormat) {
+        parsed.vision.apiFormat = "openai";
+      }
       return parsed;
     }
   } catch {}
@@ -93,7 +98,7 @@ function loadSettings(): SettingsState {
     providers: [],
     activeProviderId: null,
     activeModel: "gpt-4o-mini",
-    vision: { useSameAsCode: true, apiKey: "", baseUrl: "https://api.openai.com/v1", model: "gpt-4o" },
+    vision: { useSameAsCode: true, apiKey: "", baseUrl: "https://api.openai.com/v1", model: "gpt-4o", apiFormat: "openai" },
   };
 }
 
@@ -126,18 +131,18 @@ function guessVisionModel(baseUrl: string): string {
   return ""; // unknown
 }
 
-export function resolveVisionConfig(code: LlmConfig, vision: VisionConfig): { apiKey: string; baseUrl: string; model: string } {
+export function resolveVisionConfig(code: LlmConfig, vision: VisionConfig): { apiKey: string; baseUrl: string; model: string; apiFormat: "openai" | "anthropic" } {
   console.log("resolveVisionConfig input:", { useSameAsCode: vision.useSameAsCode, codeApiKey: code.apiKey ? "***" + code.apiKey.slice(-4) : "(empty)", codeBaseUrl: code.baseUrl, visionApiKey: vision.apiKey ? "***" + vision.apiKey.slice(-4) : "(empty)", visionBaseUrl: vision.baseUrl, visionModel: vision.model });
   if (vision.useSameAsCode) {
     const model = guessVisionModel(code.baseUrl);
     console.log("resolveVisionConfig useSameAsCode: guessed model =", model || "(empty)");
     if (model) {
-      return { apiKey: code.apiKey, baseUrl: code.baseUrl, model };
+      return { apiKey: code.apiKey, baseUrl: code.baseUrl, model, apiFormat: code.apiFormat };
     }
     // Can't auto-detect — fall back to vision config
-    return { apiKey: vision.apiKey || code.apiKey, baseUrl: vision.baseUrl || code.baseUrl, model: vision.model || "" };
+    return { apiKey: vision.apiKey || code.apiKey, baseUrl: vision.baseUrl || code.baseUrl, model: vision.model || "", apiFormat: vision.apiFormat || code.apiFormat };
   }
-  return { apiKey: vision.apiKey, baseUrl: vision.baseUrl, model: vision.model };
+  return { apiKey: vision.apiKey, baseUrl: vision.baseUrl, model: vision.model, apiFormat: vision.apiFormat || "openai" };
 }
 
 interface SettingsDialogProps {

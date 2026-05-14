@@ -589,6 +589,7 @@ async def api_teacher_analyze(
     vision_model: str = Query(default=""),
     vision_base_url: str = Query(default=""),
     vision_api_key: str = Query(default=""),
+    vision_api_format: str = Query(default="openai"),
 ):
     """Phase 1: Extract math problem from image."""
     import json as _json
@@ -598,7 +599,7 @@ async def api_teacher_analyze(
     if vision_llm and vision_llm != "{}":
         config = VisionLlmConfig.model_validate_json(vision_llm)
     elif vision_api_key:
-        config = VisionLlmConfig(api_key=vision_api_key, base_url=vision_base_url or None, model=vision_model or None)
+        config = VisionLlmConfig(api_key=vision_api_key, base_url=vision_base_url or None, model=vision_model or None, api_format=vision_api_format or "openai")
     else:
         config = VisionLlmConfig()
 
