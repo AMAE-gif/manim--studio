@@ -107,19 +107,21 @@ function getActiveProvider(state: SettingsState): Provider | null {
 function guessVisionModel(baseUrl: string): string {
   const url = baseUrl.toLowerCase();
   if (url.includes("openai.com")) return "gpt-4o";
-  if (url.includes("deepseek")) return "deepseek-chat"; // DeepSeek has no vision model; will fail gracefully
   if (url.includes("dashscope") || url.includes("aliyuncs")) return "qwen-vl-max";
   if (url.includes("bigmodel.cn")) return "glm-4v";
-  if (url.includes("moonshot")) return "moonshot-v1-8k"; // Moonshot has no vision; fallback
   if (url.includes("siliconflow")) return "Qwen/Qwen2-VL-72B-Instruct";
-  if (url.includes("groq.com")) return "llama-3.3-70b-versatile"; // Groq has no vision
-  return "gpt-4o"; // default
+  // These providers don't support vision
+  return ""; // unknown — user must configure vision model separately
 }
 
 export function resolveVisionConfig(code: LlmConfig, vision: VisionConfig): { apiKey: string; baseUrl: string; model: string } {
   if (vision.useSameAsCode) {
     const model = guessVisionModel(code.baseUrl);
-    return { apiKey: code.apiKey, baseUrl: code.baseUrl, model };
+    if (model) {
+      return { apiKey: code.apiKey, baseUrl: code.baseUrl, model };
+    }
+    // Can't auto-detect vision model — fall back to vision config (user must configure separately)
+    return { apiKey: vision.apiKey || code.apiKey, baseUrl: vision.baseUrl || code.baseUrl, model: vision.model || "" };
   }
   return { apiKey: vision.apiKey, baseUrl: vision.baseUrl, model: vision.model };
 }
@@ -417,16 +419,18 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
               />
               使用与代码模型相同的 API Key
             </label>
-            {settings.vision.useSameAsCode && activeProvider && (
-              <p className="text-[11px] text-amber-400/60">
-                将自动使用 {activeProvider.baseUrl.includes("openai.com") ? "gpt-4o"
-                  : activeProvider.baseUrl.includes("dashscope") ? "qwen-vl-max"
-                  : activeProvider.baseUrl.includes("bigmodel.cn") ? "glm-4v"
-                  : activeProvider.baseUrl.includes("siliconflow") ? "Qwen2-VL-72B"
-                  : activeProvider.baseUrl.includes("deepseek") ? "deepseek-chat（不支持图像）"
-                  : "gpt-4o"} 作为视觉模型
-              </p>
-            )}
+            {settings.vision.useSameAsCode && activeProvider && (() => {
+              const autoModel = guessVisionModel(activeProvider.baseUrl);
+              return autoModel ? (
+                <p className="text-[11px] text-amber-400/60">
+                  将自动使用 <span className="text-amber-400/80">{autoModel}</span> 作为视觉模型
+                </p>
+              ) : (
+                <p className="text-[11px] text-red-400/70">
+                  当前 Provider（{activeProvider.name}）无法自动识别视觉模型。请取消勾选，单独配置视觉模型。
+                </p>
+              );
+            })()}
             {!settings.vision.useSameAsCode && (
               <div className="space-y-2">
                 <Input
