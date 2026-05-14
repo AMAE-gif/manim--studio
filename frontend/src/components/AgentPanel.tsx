@@ -34,12 +34,12 @@ export function AgentPanel({
   const isRunning = agentState.status !== "idle" && agentState.status !== "complete" && agentState.status !== "error";
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4 animate-fade-in">
       <Textarea
         value={prompt}
         onChange={(e) => onPromptChange(e.target.value)}
         placeholder="描述你想要的动画效果..."
-        className="h-28 resize-none text-sm"
+        className="h-32 resize-none text-[14px] leading-relaxed"
         disabled={busy}
       />
 
@@ -60,16 +60,16 @@ export function AgentPanel({
         disabled={busy}
       />
 
-      <div className="flex gap-2">
+      <div className="flex gap-2.5">
         <Button
           onClick={onGenerate}
           disabled={busy || !prompt.trim() || !llmConfig.apiKey}
-          className="flex-1"
+          className="flex-1 h-10 text-[14px] font-semibold"
         >
           {isRunning ? (
-            <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
           ) : (
-            <Sparkles className="h-4 w-4 mr-1.5" />
+            <Sparkles className="h-4 w-4 mr-2" />
           )}
           {isRunning ? "生成中..." : "生成动画"}
         </Button>
@@ -77,13 +77,14 @@ export function AgentPanel({
           onClick={onRender}
           disabled={busy || !hasJob}
           variant="outline"
+          className="h-10 px-5"
         >
           渲染预览
         </Button>
       </div>
 
       {!llmConfig.apiKey && (
-        <p className="text-xs text-muted-foreground">请先在设置中配置 LLM API Key</p>
+        <p className="text-[12px] text-white/30 text-center">请先在设置中配置 LLM API Key</p>
       )}
 
       <AgentProgress

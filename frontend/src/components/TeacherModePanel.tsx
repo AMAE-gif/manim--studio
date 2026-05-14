@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { GraduationCap, Upload, X, Loader2, Sparkles, Film } from "lucide-react";
+import { GraduationCap, Upload, X, Loader2, Sparkles, Film, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { SolutionSteps } from "./SolutionSteps";
@@ -83,17 +83,21 @@ export function TeacherModePanel({
   const hasSolution = agentState.solutionSteps.length > 0;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4 animate-fade-in">
       {/* Image Upload */}
       {!hasProblem && (
         <>
           {preview ? (
-            <div className="space-y-2">
+            <div className="space-y-3 animate-scale-in">
               <div className="relative inline-block">
-                <img src={preview} alt="题目图片" className="h-20 rounded-md border border-border" />
+                <img
+                  src={preview}
+                  alt="题目图片"
+                  className="h-24 rounded-2xl border border-white/10 shadow-apple object-cover"
+                />
                 <button
                   onClick={clear}
-                  className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center text-xs"
+                  className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white/10 backdrop-blur-sm border border-white/10 text-white/60 hover:bg-red-500/80 hover:text-white flex items-center justify-center transition-all duration-200"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -101,15 +105,15 @@ export function TeacherModePanel({
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 text-xs"
+                className="h-9 px-4"
                 disabled={busy || !visionConfig.apiKey}
                 onClick={handleAnalyze}
               >
-                <GraduationCap className="h-3 w-3 mr-1" />
+                <GraduationCap className="h-4 w-4 mr-2" />
                 提取题目
               </Button>
               {!visionConfig.apiKey && (
-                <p className="text-xs text-muted-foreground">请先在设置中配置视觉模型 API Key</p>
+                <p className="text-[12px] text-white/30">请先在设置中配置视觉模型 API Key</p>
               )}
             </div>
           ) : (
@@ -117,10 +121,15 @@ export function TeacherModePanel({
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
               onClick={() => inputRef.current?.click()}
-              className="flex items-center gap-2 p-2 border border-dashed border-border rounded-md cursor-pointer hover:bg-muted/50 transition-colors"
+              className="flex flex-col items-center justify-center gap-3 p-8 border-2 border-dashed border-white/10 rounded-2xl cursor-pointer hover:border-white/20 hover:bg-white/[0.02] transition-all duration-300 group"
             >
-              <Upload className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">上传题目图片（拍照/截图）</span>
+              <div className="w-12 h-12 rounded-2xl bg-white/[0.06] flex items-center justify-center group-hover:bg-white/[0.1] transition-all duration-300">
+                <Upload className="h-5 w-5 text-white/40 group-hover:text-white/60 transition-colors" />
+              </div>
+              <div className="text-center">
+                <p className="text-[13px] text-white/50 font-medium">上传题目图片</p>
+                <p className="text-[11px] text-white/25 mt-1">拍照、截图或拖拽文件</p>
+              </div>
               <input
                 ref={inputRef}
                 type="file"
@@ -138,22 +147,23 @@ export function TeacherModePanel({
 
       {/* Extracted Problem Text */}
       {hasProblem && (
-        <div className="space-y-2">
-          <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <GraduationCap className="h-3.5 w-3.5" />
-            题目识别结果
+        <div className="space-y-2.5 animate-fade-in">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-lg bg-blue-500/10 flex items-center justify-center">
+              <GraduationCap className="h-3.5 w-3.5 text-blue-400" />
+            </div>
+            <span className="text-[13px] font-medium text-white/60">题目识别结果</span>
           </div>
           <Textarea
             value={agentState.problemText}
             onChange={(e) => {
-              // Allow editing the problem text
               window.dispatchEvent(new CustomEvent("teacher:set-problem-text", { detail: e.target.value }));
             }}
-            className="h-20 resize-none text-xs"
+            className="min-h-[80px] resize-none text-[14px] leading-relaxed"
             disabled={busy}
           />
           {agentState.problemType && (
-            <span className="inline-block bg-muted text-xs px-2 py-0.5 rounded">
+            <span className="inline-block bg-white/[0.06] text-[12px] text-white/50 px-2.5 py-1 rounded-lg">
               {agentState.problemType}
             </span>
           )}
@@ -166,7 +176,7 @@ export function TeacherModePanel({
           value={prompt}
           onChange={(e) => onPromptChange(e.target.value)}
           placeholder="可选：补充描述你的解题思路或特殊要求..."
-          className="h-16 resize-none text-xs"
+          className="min-h-[60px] resize-none text-[14px]"
           disabled={busy}
         />
       )}
@@ -183,29 +193,29 @@ export function TeacherModePanel({
 
       {/* Refinement Input */}
       {hasSolution && !isRunning && (
-        <div className="space-y-2">
+        <div className="space-y-2.5 animate-fade-in">
           <Textarea
             value={refinement}
             onChange={(e) => setRefinement(e.target.value)}
             placeholder="用自然语言描述你想要的修改，如第2步改用面积法、加一个坐标系可视化..."
-            className="h-16 resize-none text-xs"
+            className="min-h-[72px] resize-none text-[14px]"
             disabled={busy}
           />
         </div>
       )}
 
       {/* Action Buttons */}
-      <div className="flex gap-2">
+      <div className="flex gap-2.5">
         {!hasSolution ? (
           <Button
             onClick={onSolve}
             disabled={busy || (!hasProblem && !prompt.trim()) || !llmConfig.apiKey}
-            className="flex-1"
+            className="flex-1 h-10 text-[14px] font-semibold"
           >
             {isRunning ? (
-              <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             ) : (
-              <Sparkles className="h-4 w-4 mr-1.5" />
+              <Sparkles className="h-4 w-4 mr-2" />
             )}
             {isRunning ? "分析中..." : "生成解题"}
           </Button>
@@ -215,15 +225,17 @@ export function TeacherModePanel({
               onClick={handleRefine}
               disabled={busy || !refinement.trim()}
               variant="outline"
+              className="h-10 px-5"
             >
+              <Pencil className="h-4 w-4 mr-2" />
               应用修改
             </Button>
             <Button
               onClick={onRender}
               disabled={busy || !hasJob}
-              className="flex-1"
+              className="flex-1 h-10 text-[14px] font-semibold"
             >
-              <Film className="h-4 w-4 mr-1.5" />
+              <Film className="h-4 w-4 mr-2" />
               生成动画
             </Button>
           </>
@@ -232,13 +244,19 @@ export function TeacherModePanel({
 
       {/* Refinement History */}
       {agentState.refinementHistory.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-xs text-muted-foreground">修改记录</div>
-          {agentState.refinementHistory.map((r, i) => (
-            <div key={i} className="text-xs text-muted-foreground border-l-2 border-border pl-2">
-              {r.stepIndex !== null && `第${r.stepIndex + 1}步：`}{r.instruction}
-            </div>
-          ))}
+        <div className="space-y-2 animate-fade-in">
+          <div className="text-[12px] text-white/30 font-medium">修改记录</div>
+          <div className="space-y-1.5">
+            {agentState.refinementHistory.map((r, i) => (
+              <div
+                key={i}
+                className="text-[12px] text-white/40 border-l-2 border-white/10 pl-3 py-0.5"
+              >
+                {r.stepIndex !== null && <span className="text-white/50">第{r.stepIndex + 1}步：</span>}
+                {r.instruction}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

@@ -58,6 +58,62 @@ body {
   color: #fafafa;
   font-family: "Inter", system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Apple-like smooth transitions */
+* {
+  transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+/* Glass morphism utility */
+.glass {
+  background: rgba(24, 24, 27, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+.glass-light {
+  background: rgba(24, 24, 27, 0.45);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+}
+
+/* Apple-like shadow system */
+.shadow-apple {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.shadow-apple-lg {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.2);
+}
+
+/* Smooth press effect */
+.press-effect {
+  transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1), opacity 0.15s ease;
+}
+.press-effect:active {
+  transform: scale(0.97);
+}
+
+/* Fade in animation */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+}
+
+/* Scale in animation */
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-scale-in {
+  animation: scale-in 0.25s cubic-bezier(0.25, 0.1, 0.25, 1) both;
 }
 
 :root {

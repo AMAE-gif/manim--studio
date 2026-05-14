@@ -60,28 +60,32 @@ export function StyleUpload({ onAnalysis, visionConfig, disabled }: StyleUploadP
 
   if (preview) {
     return (
-      <div className="space-y-2">
+      <div className="space-y-2.5 animate-scale-in">
         <div className="relative inline-block">
-          <img src={preview} alt="风格参考" className="h-20 rounded-md border border-border" />
+          <img
+            src={preview}
+            alt="风格参考"
+            className="h-20 rounded-xl border border-white/10 shadow-apple object-cover"
+          />
           <button
             onClick={clear}
-            className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center text-xs"
+            className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-white/10 backdrop-blur-sm border border-white/10 text-white/60 hover:bg-red-500/80 hover:text-white flex items-center justify-center transition-all duration-200"
           >
-            <X className="h-3 w-3" />
+            <X className="h-2.5 w-2.5" />
           </button>
         </div>
         <Button
           size="sm"
           variant="outline"
-          className="h-7 text-xs"
+          className="h-8 px-3"
           disabled={disabled || analyzing || !visionConfig.apiKey}
           onClick={analyze}
         >
-          {analyzing ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+          {analyzing ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
           {analyzing ? "分析中..." : "分析风格"}
         </Button>
         {!visionConfig.apiKey && (
-          <p className="text-xs text-muted-foreground">请先在设置中配置视觉模型 API Key</p>
+          <p className="text-[11px] text-white/25">请先在设置中配置视觉模型 API Key</p>
         )}
       </div>
     );
@@ -92,10 +96,12 @@ export function StyleUpload({ onAnalysis, visionConfig, disabled }: StyleUploadP
       onDrop={handleDrop}
       onDragOver={(e) => e.preventDefault()}
       onClick={() => inputRef.current?.click()}
-      className="flex items-center gap-2 p-2 border border-dashed border-border rounded-md cursor-pointer hover:bg-muted/50 transition-colors"
+      className="flex items-center gap-2.5 p-3 border border-dashed border-white/[0.08] rounded-xl cursor-pointer hover:border-white/[0.15] hover:bg-white/[0.02] transition-all duration-300 group"
     >
-      <Upload className="h-4 w-4 text-muted-foreground" />
-      <span className="text-xs text-muted-foreground">拖拽或点击上传风格参考图</span>
+      <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center group-hover:bg-white/[0.08] transition-all duration-300">
+        <Upload className="h-4 w-4 text-white/30 group-hover:text-white/50 transition-colors" />
+      </div>
+      <span className="text-[12px] text-white/30 group-hover:text-white/50 transition-colors">拖拽或点击上传风格参考图</span>
       <input
         ref={inputRef}
         type="file"
