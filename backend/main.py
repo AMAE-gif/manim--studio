@@ -10,7 +10,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -130,6 +129,7 @@ def _ensure_scene(code: str) -> str:
 
 async def generate_manim_code(user_prompt: str, llm: LlmConfig | None = None) -> str:
     from agent.workflow import _llm_chat
+    from agent.tools import validate_syntax, check_manim_imports
 
     api_key = (llm.api_key if llm and llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -145,15 +145,34 @@ async def generate_manim_code(user_prompt: str, llm: LlmConfig | None = None) ->
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
-    try:
-        raw = await _llm_chat(
-            messages=messages, model=model, api_key=api_key,
-            base_url=base_url, api_format=api_format, temperature=0.3,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM 调用失败: {e!s}") from e
 
-    code = _strip_code_fences(raw)
+    # Generate + validate loop (max 2 attempts)
+    raw = None
+    code = None
+    for attempt in range(2):
+        try:
+            raw = await _llm_chat(
+                messages=messages, model=model, api_key=api_key,
+                base_url=base_url, api_format=api_format, temperature=0.3,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"LLM 调用失败: {e!s}") from e
+
+        code = _strip_code_fences(raw)
+
+        # Validate syntax and imports
+        syntax = validate_syntax(code)
+        imports = check_manim_imports(code)
+        if syntax["passed"] and imports["valid"]:
+            break  # Code is valid
+
+        # If first attempt failed, retry with error feedback
+        if attempt == 0:
+            error_detail = syntax.get("error") or str(imports.get("checks", {}))
+            messages.append({"role": "assistant", "content": raw})
+            messages.append({"role": "user", "content": f"代码有语法错误：\n{error_detail}\n请只输出修复后的完整 Python 代码。"})
+            continue
+
     try:
         return _ensure_scene(code)
     except ValueError as e:
@@ -202,10 +221,12 @@ class RenderBody(BaseModel):
 
 
 @app.post("/api/render")
-def api_render(
+async def api_render(
     body: RenderBody,
     user_id: UUID | None = Depends(get_optional_user),
 ):
+    import asyncio as _asyncio
+
     job_dir = WORKDIR / body.job_id
     if not job_dir.is_dir():
         raise HTTPException(status_code=404, detail="job_id 不存在，请先生成")
@@ -224,33 +245,31 @@ def api_render(
         except Exception as e:
             log.warning("Supabase update_project_code 失败: %s", e)
 
-    cmd = [
-        "manim",
-        "render",
-        "-ql",
-        str(script_path),
-        SCENE_CLASS,
-    ]
+    timeout_sec = int(os.environ.get("MANIM_TIMEOUT_SEC", "120"))
     try:
-        proc = subprocess.run(
-            cmd,
+        proc = await _asyncio.create_subprocess_exec(
+            "manim", "render", "-ql", str(script_path), SCENE_CLASS,
             cwd=str(job_dir),
-            capture_output=True,
-            text=True,
-            timeout=int(os.environ.get("MANIM_TIMEOUT_SEC", "120")),
-            encoding="utf-8",
-            errors="replace",
+            stdout=_asyncio.subprocess.PIPE,
+            stderr=_asyncio.subprocess.PIPE,
         )
+        stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+        stdout_str = stdout.decode(encoding="utf-8", errors="replace") if stdout else ""
+        stderr_str = stderr.decode(encoding="utf-8", errors="replace") if stderr else ""
     except FileNotFoundError:
         raise HTTPException(
             status_code=500,
             detail="未找到 manim 命令，请先安装：pip install manim",
         )
-    except subprocess.TimeoutExpired:
+    except _asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
         raise HTTPException(status_code=504, detail="渲染超时，请简化描述后重试")
 
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "")[-8000:]
+        err = (stderr_str or stdout_str or "")[-8000:]
         raise HTTPException(status_code=400, detail=f"Manim 渲染失败:\n{err}")
 
     video = find_manim_video(job_dir)
