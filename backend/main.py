@@ -22,8 +22,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from agent import analyze_image_style, run_agent_workflow, submit_job, get_job, get_queue_info
-from agent.models import AgentGenerateBody, VisionLlmConfig
+from agent import analyze_image_style, run_agent_workflow, run_teacher_workflow, submit_job, get_job, get_queue_info
+from agent.models import AgentGenerateBody, VisionLlmConfig, TeacherModeSubmit
 
 from supabase_sync import (
     decode_user_id_from_jwt,
@@ -508,3 +508,100 @@ async def api_agent_stream(job_id: str):
 async def api_agent_queue():
     """Get queue status."""
     return get_queue_info()
+
+
+# ── 教师模式端点 ──────────────────────────────────────────────
+
+
+@app.post("/api/teacher/analyze")
+async def api_teacher_analyze(
+    file: UploadFile,
+    vision_llm: str = "{}",
+):
+    """Phase 1: Extract math problem from image."""
+    import json as _json
+    config = VisionLlmConfig.model_validate_json(vision_llm)
+    image_bytes = await file.read()
+    from agent.vision import extract_math_problem
+    result = await extract_math_problem(image_bytes, file.content_type or "image/png", config)
+    return result
+
+
+@app.post("/api/teacher/submit")
+async def api_teacher_submit(body: TeacherModeSubmit):
+    """Submit teacher mode job (solve + generate or refine + generate)."""
+    from agent.models import LlmConfig, AnimationRules
+
+    job_id, pending = await submit_teacher_job(
+        image_base64=body.image_base64,
+        content_type=body.content_type,
+        prompt=body.prompt,
+        llm_config=body.llm,
+        vision_llm_config=body.vision_llm,
+        rules=body.rules,
+        style_analysis=body.style_analysis,
+        session_id=body.session_id,
+        refinement=body.refinement,
+        step_index=body.step_index,
+    )
+    return {
+        "job_id": job_id,
+        "queue_position": pending,
+        "status": "pending",
+    }
+
+
+async def submit_teacher_job(
+    image_base64: str | None = None,
+    content_type: str = "image/png",
+    prompt: str = "",
+    llm_config=None,
+    vision_llm_config=None,
+    rules=None,
+    style_analysis: str | None = None,
+    session_id: str | None = None,
+    refinement: str | None = None,
+    step_index: int | None = None,
+) -> tuple[str, int]:
+    """Submit a teacher workflow job to the queue."""
+    import asyncio as _asyncio
+    from agent.queue import _semaphore, _jobs, JobState
+    from agent.models import LlmConfig, VisionLlmConfig, AnimationRules
+    import uuid as _uuid
+
+    job_id = str(_uuid.uuid4())
+    job = JobState(job_id=job_id)
+    _jobs[job_id] = job
+
+    pending = sum(1 for j in _jobs.values() if j.status == "pending")
+
+    async def _run():
+        async with _semaphore:
+            job.status = "running"
+            async for event in run_teacher_workflow(
+                image_base64=image_base64,
+                content_type=content_type,
+                prompt=prompt,
+                llm_config=llm_config,
+                vision_llm_config=vision_llm_config,
+                rules=rules,
+                style_analysis=style_analysis,
+                session_id=session_id,
+                refinement=refinement,
+                step_index=step_index,
+            ):
+                job.events.append(event)
+                if event["event"] == "complete":
+                    job.code = event["data"].get("code")
+                    job.video_url = event["data"].get("video_url")
+                    job.status = "complete"
+                elif event["event"] == "error":
+                    job.error = event["data"].get("message")
+                    job.status = "error"
+                # Notify SSE listeners
+                for listener in job._listeners:
+                    listener.set()
+            job.result_event.set()
+
+    _asyncio.create_task(_run())
+    return job_id, pending

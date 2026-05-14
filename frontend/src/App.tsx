@@ -3,7 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import { apiFetch, resolveMediaUrl } from "./lib/api";
 import { supabase } from "./lib/supabase";
 import type { Health, ProjectRow } from "./lib/types";
-import { submitAndStreamAgent } from "./lib/sse";
+import { submitAndStreamAgent, submitAndStreamTeacher } from "./lib/sse";
 import { agentReducer, initialState } from "./lib/agent-store";
 import type { AgentPlan } from "./lib/agent-store";
 import type { VisionConfig } from "./components/SettingsDialog";
@@ -12,6 +12,7 @@ import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { PromptPanel } from "./components/PromptPanel";
 import { AgentPanel } from "./components/AgentPanel";
+import { TeacherModePanel } from "./components/TeacherModePanel";
 import { CodeEditor } from "./components/CodeEditor";
 import { VideoPreview } from "./components/VideoPreview";
 import { StatusBar } from "./components/StatusBar";
@@ -39,7 +40,7 @@ export default function App() {
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4o",
   });
-  const [agentMode, setAgentMode] = useState(true);
+  const [mode, setMode] = useState<"simple" | "agent" | "teacher">("agent");
 
   const [agentState, agentDispatch] = useReducer(agentReducer, initialState);
 
@@ -93,7 +94,7 @@ export default function App() {
     void loadProjects();
   }, [loadProjects]);
 
-  // Listen for custom events from AgentPanel
+  // Listen for custom events from AgentPanel and TeacherModePanel
   useEffect(() => {
     const onSetStyle = (e: Event) => {
       agentDispatch({ type: "SET_STYLE", analysis: (e as CustomEvent).detail });
@@ -101,13 +102,18 @@ export default function App() {
     const onSetRules = (e: Event) => {
       agentDispatch({ type: "SET_RULES", rules: (e as CustomEvent).detail });
     };
+    const onSetProblemText = (e: Event) => {
+      agentDispatch({ type: "PROBLEM_EXTRACTED", problemText: (e as CustomEvent).detail, problemType: agentState.problemType, expressions: agentState.expressions });
+    };
     window.addEventListener("agent:set-style", onSetStyle);
     window.addEventListener("agent:set-rules", onSetRules);
+    window.addEventListener("teacher:set-problem-text", onSetProblemText);
     return () => {
       window.removeEventListener("agent:set-style", onSetStyle);
       window.removeEventListener("agent:set-rules", onSetRules);
+      window.removeEventListener("teacher:set-problem-text", onSetProblemText);
     };
-  }, []);
+  }, [agentState.problemType, agentState.expressions]);
 
   // Sync code from agent state to local state
   useEffect(() => {
@@ -125,6 +131,156 @@ export default function App() {
       void loadProjects();
     }
   }, [agentState.jobId, loadProjects]);
+
+  // Teacher mode handlers
+  const onTeacherAnalyze = async (file: File) => {
+    setBusy(true);
+    agentDispatch({ type: "RESET" });
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("vision_llm", JSON.stringify({
+        api_key: resolvedVision.apiKey,
+        base_url: resolvedVision.baseUrl || undefined,
+        model: resolvedVision.model || "gpt-4o",
+      }));
+      const r = await apiFetch("/api/teacher/analyze", { method: "POST", body: formData }, token);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setStatus(typeof data.detail === "string" ? data.detail : "题目识别失败");
+        return;
+      }
+      agentDispatch({
+        type: "PROBLEM_EXTRACTED",
+        problemText: data.problem_text || "",
+        problemType: data.problem_type || "",
+        expressions: data.expressions || [],
+      });
+      setStatus("题目已识别。");
+    } catch (e) {
+      setStatus(`网络错误：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onTeacherSolve = async () => {
+    if (!agentState.problemText && !prompt.trim()) return;
+    setBusy(true);
+    setVideoUrl(null);
+
+    await submitAndStreamTeacher(
+      {
+        prompt: prompt || agentState.problemText,
+        llm: llmConfig.apiKey
+          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model }
+          : null,
+        vision_llm: {
+          api_key: resolvedVision.apiKey,
+          base_url: resolvedVision.baseUrl || undefined,
+          model: resolvedVision.model || "gpt-4o",
+        },
+        style_analysis: agentState.styleAnalysis || null,
+        rules: {
+          max_duration: agentState.rules.maxDuration,
+          color_palette: agentState.rules.colorPalette || null,
+          font_size: agentState.rules.fontSize,
+          background: agentState.rules.background || null,
+          custom_rules: agentState.rules.customRules || null,
+        },
+      },
+      {
+        onStepStart: (data) => agentDispatch({ type: "STEP_START", step: data.step, message: data.message }),
+        onProblemExtracted: (data) => agentDispatch({ type: "PROBLEM_EXTRACTED", problemText: data.problem_text, problemType: data.problem_type, expressions: data.expressions }),
+        onSolutionReady: (data) => agentDispatch({ type: "SOLUTION_READY", steps: data.steps, summary: data.summary }),
+        onSolutionRefined: (data) => agentDispatch({ type: "SOLUTION_REFINED", steps: data.steps, instruction: data.refinement_applied, stepIndex: null }),
+        onCodeGenerated: (data) => agentDispatch({ type: "CODE_GENERATED", code: data.code }),
+        onValidationResult: (data) => {
+          agentDispatch({ type: "STEP_END", passed: data.passed, error: data.syntax_error });
+          if (!data.passed) {
+            agentDispatch({ type: "STEP_START", step: "correct", message: "修正中..." });
+          }
+        },
+        onRenderResult: (data) => {
+          agentDispatch({ type: "STEP_END", passed: data.passed, error: data.error });
+          if (data.video_url) {
+            agentDispatch({ type: "RENDER_RESULT", passed: true, videoUrl: data.video_url });
+          }
+        },
+        onComplete: (data) => {
+          agentDispatch({ type: "COMPLETE", code: data.code, videoUrl: data.video_url, jobId: data.job_id });
+          if (data.session_id) {
+            agentDispatch({ type: "SET_SESSION_ID", sessionId: data.session_id });
+          }
+          setStatus("动画生成完成。");
+        },
+        onError: (data) => {
+          agentDispatch({ type: "ERROR", message: data.message });
+          setStatus(`错误：${data.message}`);
+        },
+      },
+      token
+    );
+
+    setBusy(false);
+  };
+
+  const onTeacherRefine = async (instruction: string, stepIndex: number | null) => {
+    if (!agentState.sessionId) return;
+    setBusy(true);
+    setVideoUrl(null);
+
+    await submitAndStreamTeacher(
+      {
+        session_id: agentState.sessionId,
+        refinement: instruction,
+        step_index: stepIndex,
+        llm: llmConfig.apiKey
+          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model }
+          : null,
+        vision_llm: {
+          api_key: resolvedVision.apiKey,
+          base_url: resolvedVision.baseUrl || undefined,
+          model: resolvedVision.model || "gpt-4o",
+        },
+        rules: {
+          max_duration: agentState.rules.maxDuration,
+          color_palette: agentState.rules.colorPalette || null,
+          font_size: agentState.rules.fontSize,
+          background: agentState.rules.background || null,
+          custom_rules: agentState.rules.customRules || null,
+        },
+      },
+      {
+        onStepStart: (data) => agentDispatch({ type: "STEP_START", step: data.step, message: data.message }),
+        onSolutionRefined: (data) => agentDispatch({ type: "SOLUTION_REFINED", steps: data.steps, instruction: data.refinement_applied, stepIndex }),
+        onCodeGenerated: (data) => agentDispatch({ type: "CODE_GENERATED", code: data.code }),
+        onValidationResult: (data) => {
+          agentDispatch({ type: "STEP_END", passed: data.passed, error: data.syntax_error });
+          if (!data.passed) {
+            agentDispatch({ type: "STEP_START", step: "correct", message: "修正中..." });
+          }
+        },
+        onRenderResult: (data) => {
+          agentDispatch({ type: "STEP_END", passed: data.passed, error: data.error });
+          if (data.video_url) {
+            agentDispatch({ type: "RENDER_RESULT", passed: true, videoUrl: data.video_url });
+          }
+        },
+        onComplete: (data) => {
+          agentDispatch({ type: "COMPLETE", code: data.code, videoUrl: data.video_url, jobId: data.job_id });
+          setStatus("修改已应用，动画已重新生成。");
+        },
+        onError: (data) => {
+          agentDispatch({ type: "ERROR", message: data.message });
+          setStatus(`错误：${data.message}`);
+        },
+      },
+      token
+    );
+
+    setBusy(false);
+  };
 
   // Agent mode generate
   const onAgentGenerate = async () => {
@@ -220,7 +376,7 @@ export default function App() {
     }
   };
 
-  const onGenerate = agentMode ? onAgentGenerate : onSimpleGenerate;
+  const onGenerate = mode === "agent" ? onAgentGenerate : mode === "teacher" ? onAgentGenerate : onSimpleGenerate;
 
   const onRender = async () => {
     if (!jobId) {
@@ -345,8 +501,8 @@ export default function App() {
         health={health}
         onLlmConfigChange={setLlmConfig}
         onVisionChange={setVisionConfig}
-        agentMode={agentMode}
-        onAgentModeChange={setAgentMode}
+        mode={mode}
+        onModeChange={setMode}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -396,7 +552,21 @@ export default function App() {
             {/* Left: Prompt + Code */}
             <div className="flex flex-col lg:w-1/2 p-4 overflow-auto border-b lg:border-b-0 lg:border-r border-border">
               <div className="mb-4">
-                {agentMode ? (
+                {mode === "teacher" ? (
+                  <TeacherModePanel
+                    prompt={prompt}
+                    onPromptChange={setPrompt}
+                    agentState={agentState}
+                    llmConfig={llmConfig}
+                    visionConfig={resolvedVision}
+                    onAnalyze={onTeacherAnalyze}
+                    onSolve={onTeacherSolve}
+                    onRefine={onTeacherRefine}
+                    onRender={onRender}
+                    busy={busy}
+                    hasJob={!!jobId}
+                  />
+                ) : mode === "agent" ? (
                   <AgentPanel
                     prompt={prompt}
                     onPromptChange={setPrompt}

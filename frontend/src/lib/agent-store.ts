@@ -26,6 +26,9 @@ export type AgentStatus =
   | "validating"
   | "rendering"
   | "correcting"
+  | "extracting"
+  | "solving"
+  | "refining"
   | "complete"
   | "error";
 
@@ -56,6 +59,23 @@ export interface AgentState {
   styleAnalysis: string;
   plan: AgentPlan | null;
   rules: AnimationRules;
+  // Teacher mode
+  problemText: string;
+  problemType: string;
+  expressions: string[];
+  solutionSteps: SolutionStep[];
+  solutionSummary: string;
+  sessionId: string | null;
+  refinementHistory: Array<{ instruction: string; stepIndex: number | null; timestamp: number }>;
+}
+
+export interface SolutionStep {
+  index: number;
+  title: string;
+  description: string;
+  math_expression: string | null;
+  visual_description: string | null;
+  animation_hint: string | null;
 }
 
 export type AgentAction =
@@ -69,6 +89,11 @@ export type AgentAction =
   | { type: "ERROR"; message: string }
   | { type: "SET_STYLE"; analysis: string }
   | { type: "SET_RULES"; rules: Partial<AnimationRules> }
+  | { type: "PROBLEM_EXTRACTED"; problemText: string; problemType: string; expressions: string[] }
+  | { type: "SOLUTION_READY"; steps: SolutionStep[]; summary: string }
+  | { type: "SOLUTION_REFINED"; steps: SolutionStep[]; instruction: string; stepIndex: number | null }
+  | { type: "SET_SESSION_ID"; sessionId: string }
+  | { type: "RESET_TEACHER" }
   | { type: "RESET" };
 
 export const initialRules: AnimationRules = {
@@ -91,6 +116,13 @@ export const initialState: AgentState = {
   styleAnalysis: "",
   plan: null,
   rules: initialRules,
+  problemText: "",
+  problemType: "",
+  expressions: [],
+  solutionSteps: [],
+  solutionSummary: "",
+  sessionId: null,
+  refinementHistory: [],
 };
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -104,6 +136,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           : action.step === "validate" ? "validating"
           : action.step === "render_test" ? "rendering"
           : action.step === "correct" ? "correcting"
+          : action.step === "extract" ? "extracting"
+          : action.step === "solve" ? "solving"
+          : action.step === "refine" ? "refining"
           : state.status,
         steps: [
           ...state.steps,
@@ -177,6 +212,41 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
 
     case "SET_RULES":
       return { ...state, rules: { ...state.rules, ...action.rules } };
+
+    case "PROBLEM_EXTRACTED":
+      return {
+        ...state,
+        problemText: action.problemText,
+        problemType: action.problemType,
+        expressions: action.expressions,
+      };
+
+    case "SOLUTION_READY":
+      return {
+        ...state,
+        solutionSteps: action.steps,
+        solutionSummary: action.summary,
+      };
+
+    case "SOLUTION_REFINED":
+      return {
+        ...state,
+        solutionSteps: action.steps,
+        refinementHistory: [
+          ...state.refinementHistory,
+          { instruction: action.instruction, stepIndex: action.stepIndex, timestamp: Date.now() },
+        ],
+      };
+
+    case "SET_SESSION_ID":
+      return { ...state, sessionId: action.sessionId };
+
+    case "RESET_TEACHER":
+      return {
+        ...initialState,
+        styleAnalysis: state.styleAnalysis,
+        rules: state.rules,
+      };
 
     case "RESET":
       return { ...initialState, styleAnalysis: state.styleAnalysis, rules: state.rules };

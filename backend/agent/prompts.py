@@ -65,3 +65,88 @@ def build_system_prompt(
         rules_section=build_rules_section(rules),
         style_section=build_style_section(style_analysis),
     )
+
+
+# ── Teacher Mode Prompts ──
+
+TEACHER_SOLVE_PROMPT = """你是一个资深数学教师和 Manim 动画专家。你需要：
+1. 给出清晰的、分步骤的数学解题过程
+2. 每个步骤都必须包含"代数推导"和"几何/可视化描述"两个维度（数形结合）
+
+题目信息：
+{problem_text}
+
+请按以下 JSON 格式输出解题过程（只输出 JSON，不要其他文字）：
+
+{{
+  "solution": [
+    {{
+      "index": 1,
+      "title": "步骤标题",
+      "description": "详细的代数推导过程",
+      "math_expression": "LaTeX 格式的关键公式，如 \\\\frac{{a}}{{b}} = c",
+      "visual_description": "这一步对应的几何/可视化表现，如'在坐标系上画出函数图像，用红色标注交点'",
+      "animation_hint": "Manim 动画建议，如'用 Write 显示公式，同时用 FadeIn 显示对应的图形'"
+    }}
+  ],
+  "summary": "整体解题思路总结",
+  "visual_summary": "数形结合的核心思想说明"
+}}
+
+数形结合映射规则：
+- 方程求解 -> 画出函数图像、标注交点
+- 不等式 -> 用数轴或面积表示
+- 几何题 -> 在几何图形上标注证明步骤
+- 数列 -> 用柱状图或折线图展示趋势
+- 概率 -> 用树状图或面积模型
+- 函数 -> 同时显示解析式和图像
+
+注意：
+- 数学公式用 LaTeX 语法
+- 可视化描述要具体到 Manim 组件（如 NumberPlane, Axes, Dot, Line 等）
+- 总动画时长控制在 20-30 秒
+"""
+
+TEACHER_REFINE_PROMPT = """你之前的解题过程如下：
+{current_solution}
+
+老师的反馈：
+{teacher_instruction}
+
+{step_context}
+
+请根据老师的反馈修改解题过程。只输出修改后的完整 JSON（格式同上），不要其他文字。
+保留老师没有要求修改的部分，重点改进老师指出的步骤。
+数形结合原则不变：每个代数步骤仍需对应可视化表现。
+"""
+
+TEACHER_TO_MANIM_PROMPT = """你是一个 Manim Community Edition 专家。根据以下数学题解过程，生成完整的 Manim 动画代码。
+
+题目：{problem_text}
+
+解题步骤：
+{solution_json}
+
+要求：
+1. 第一行必须是：from manim import *
+2. 必须定义 class GeneratedScene(Scene):
+3. construct(self) 内完成所有动画
+4. 总时长控制在 25-30 秒以内
+
+动画结构（数形结合）：
+- 开场（2秒）：显示题目标题和关键信息
+- 每个解题步骤（3-5秒/步）：
+  a. 左侧/上方：用 MathTex 显示代数推导过程
+  b. 右侧/下方：用对应的 Manim 图形展示几何含义
+  c. 两者之间用箭头或连线表示对应关系
+- 总结（2-3秒）：回顾关键结论
+
+具体要求：
+- 中文文字用 Text("中文", font="Noto Sans CJK SC") 渲染
+- 数学公式用 MathTex
+- 不同概念用不同颜色区分
+- 用注释分隔不同步骤（如 # ── 第一步：xxx ──）
+- 步骤之间用动画转场（FadeIn/FadeOut/Transform）
+- 每步的代数部分和可视化部分同时出现，用 VGroup 组织
+- 不要 markdown 代码块，只输出纯 Python 源码
+"""

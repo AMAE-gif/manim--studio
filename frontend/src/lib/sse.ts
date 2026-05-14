@@ -8,9 +8,12 @@ export interface SSECallbacks {
   onCodeGenerated?: (data: { code: string; duration?: number }) => void;
   onValidationResult?: (data: { passed: boolean; syntax_error?: string; imports?: unknown; duration?: number }) => void;
   onRenderResult?: (data: { passed: boolean; error?: string; video_url?: string; duration?: number }) => void;
-  onComplete?: (data: { code: string; video_url?: string; job_id: string; total_duration?: number }) => void;
+  onComplete?: (data: { code: string; video_url?: string; job_id: string; session_id?: string; total_duration?: number }) => void;
   onError?: (data: { message: string; recoverable?: boolean }) => void;
   onToolResult?: (data: { tool: string; result: unknown }) => void;
+  onProblemExtracted?: (data: { problem_text: string; problem_type: string; expressions: string[]; visual_elements: string[] }) => void;
+  onSolutionReady?: (data: { steps: Array<{ index: number; title: string; description: string; math_expression: string | null; visual_description: string | null; animation_hint: string | null }>; summary: string; visual_summary?: string }) => void;
+  onSolutionRefined?: (data: { steps: Array<{ index: number; title: string; description: string; math_expression: string | null; visual_description: string | null; animation_hint: string | null }>; summary?: string; refinement_applied: string }) => void;
   onDone?: () => void;
 }
 
@@ -39,6 +42,15 @@ function dispatchEvent(eventType: string, data: Record<string, unknown>, callbac
       break;
     case "tool_result":
       callbacks.onToolResult?.(data as { tool: string; result: unknown });
+      break;
+    case "problem_extracted":
+      callbacks.onProblemExtracted?.(data as { problem_text: string; problem_type: string; expressions: string[]; visual_elements: string[] });
+      break;
+    case "solution_ready":
+      callbacks.onSolutionReady?.(data as { steps: Array<{ index: number; title: string; description: string; math_expression: string | null; visual_description: string | null; animation_hint: string | null }>; summary: string; visual_summary?: string });
+      break;
+    case "solution_refined":
+      callbacks.onSolutionRefined?.(data as { steps: Array<{ index: number; title: string; description: string; math_expression: string | null; visual_description: string | null; animation_hint: string | null }>; summary?: string; refinement_applied: string });
       break;
   }
 }
@@ -140,6 +152,46 @@ export async function submitAndStreamAgent(
   const { job_id } = await submitRes.json();
 
   // Step 2: Stream results via SSE
+  const streamHeaders: Record<string, string> = {};
+  if (accessToken) streamHeaders["Authorization"] = `Bearer ${accessToken}`;
+
+  const streamRes = await fetch(apiPath(`/api/agent/stream/${job_id}`), {
+    headers: streamHeaders,
+  });
+
+  if (!streamRes.ok) {
+    callbacks.onError?.({ message: "无法连接到任务流" });
+    return;
+  }
+
+  const reader = streamRes.body!.getReader();
+  const decoder = new TextDecoder();
+  await parseSSEStream(reader, decoder, callbacks);
+}
+
+/** Teacher mode: submit to /api/teacher/submit → stream via /api/agent/stream/{job_id}. */
+export async function submitAndStreamTeacher(
+  body: Record<string, unknown>,
+  callbacks: SSECallbacks,
+  accessToken?: string | null,
+): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+
+  const submitRes = await fetch(apiPath("/api/teacher/submit"), {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!submitRes.ok) {
+    const err = await submitRes.json().catch(() => ({}));
+    callbacks.onError?.({ message: err.detail || "提交任务失败" });
+    return;
+  }
+
+  const { job_id } = await submitRes.json();
+
   const streamHeaders: Record<string, string> = {};
   if (accessToken) streamHeaders["Authorization"] = `Bearer ${accessToken}`;
 

@@ -1,4 +1,4 @@
-import { Clapperboard, Bot, Wand2 } from "lucide-react";
+import { Clapperboard, Bot, Wand2, GraduationCap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { SettingsDialog } from "./SettingsDialog";
 import type { LlmConfig, VisionConfig } from "./SettingsDialog";
@@ -8,11 +8,11 @@ interface HeaderProps {
   health: Health | null;
   onLlmConfigChange: (config: LlmConfig) => void;
   onVisionChange: (config: VisionConfig) => void;
-  agentMode: boolean;
-  onAgentModeChange: (v: boolean) => void;
+  mode: "simple" | "agent" | "teacher";
+  onModeChange: (v: "simple" | "agent" | "teacher") => void;
 }
 
-export function Header({ health, onLlmConfigChange, onVisionChange, agentMode, onAgentModeChange }: HeaderProps) {
+export function Header({ health, onLlmConfigChange, onVisionChange, mode, onModeChange }: HeaderProps) {
   return (
     <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface/80 backdrop-blur-sm">
       <div className="flex items-center gap-2.5">
@@ -20,19 +20,45 @@ export function Header({ health, onLlmConfigChange, onVisionChange, agentMode, o
         <h1 className="text-base font-semibold tracking-tight">Manim Studio</h1>
       </div>
       <div className="flex items-center gap-2">
-        {/* Agent mode toggle */}
-        <button
-          onClick={() => onAgentModeChange(!agentMode)}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-            agentMode
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground hover:bg-muted/80"
-          }`}
-          title={agentMode ? "Agent 模式：自动规划/生成/验证/渲染" : "简单模式：直接生成代码"}
-        >
-          {agentMode ? <Bot className="h-3.5 w-3.5" /> : <Wand2 className="h-3.5 w-3.5" />}
-          {agentMode ? "Agent" : "简单"}
-        </button>
+        {/* Mode toggle */}
+        <div className="flex rounded-md border border-border overflow-hidden">
+          <button
+            onClick={() => onModeChange("simple")}
+            className={`flex items-center gap-1 px-2 py-1 text-xs font-medium transition-colors ${
+              mode === "simple"
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+            title="简单模式：直接生成代码"
+          >
+            <Wand2 className="h-3.5 w-3.5" />
+            简单
+          </button>
+          <button
+            onClick={() => onModeChange("agent")}
+            className={`flex items-center gap-1 px-2 py-1 text-xs font-medium transition-colors border-l border-border ${
+              mode === "agent"
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+            title="Agent 模式：自动规划/生成/验证/渲染"
+          >
+            <Bot className="h-3.5 w-3.5" />
+            Agent
+          </button>
+          <button
+            onClick={() => onModeChange("teacher")}
+            className={`flex items-center gap-1 px-2 py-1 text-xs font-medium transition-colors border-l border-border ${
+              mode === "teacher"
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+            title="教师模式：上传题目 → AI解题 → 数形结合动画"
+          >
+            <GraduationCap className="h-3.5 w-3.5" />
+            教师
+          </button>
+        </div>
 
         {health && (
           <>

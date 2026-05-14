@@ -32,3 +32,16 @@ class AgentGenerateBody(BaseModel):
     style_analysis: str | None = None
     rules: AnimationRules | None = None
     max_retries: int = Field(default=3, ge=1, le=5)
+
+
+class TeacherModeSubmit(BaseModel):
+    prompt: str = ""
+    image_base64: str | None = None
+    content_type: str = "image/png"
+    llm: LlmConfig | None = None
+    vision_llm: VisionLlmConfig | None = None
+    rules: AnimationRules | None = None
+    style_analysis: str | None = None
+    session_id: str | None = None
+    refinement: str | None = None
+    step_index: int | None = None
