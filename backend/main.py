@@ -129,6 +129,9 @@ def _ensure_scene(code: str) -> str:
 
 
 def generate_manim_code(user_prompt: str, llm: LlmConfig | None = None) -> str:
+    import asyncio
+    from agent.workflow import _llm_chat
+
     api_key = (llm.api_key if llm and llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -136,21 +139,21 @@ def generate_manim_code(user_prompt: str, llm: LlmConfig | None = None) -> str:
             detail="未配置 API Key。请在设置中填写你的 LLM API Key，或在后端环境变量中设置 OPENAI_API_KEY。",
         )
     base_url = (llm.base_url if llm and llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
-    client = OpenAI(api_key=api_key, base_url=base_url or None)
     model = (llm.model if llm and llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    api_format = (llm.api_format if llm and llm.api_format else "openai")
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
     try:
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.3,
-        )
+        raw = asyncio.run(_llm_chat(
+            messages=messages, model=model, api_key=api_key,
+            base_url=base_url, api_format=api_format, temperature=0.3,
+        ))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM 调用失败: {e!s}") from e
 
-    raw = completion.choices[0].message.content or ""
     code = _strip_code_fences(raw)
     try:
         return _ensure_scene(code)

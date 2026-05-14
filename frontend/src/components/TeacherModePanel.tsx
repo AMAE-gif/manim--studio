@@ -81,6 +81,7 @@ export function TeacherModePanel({
 
   const hasProblem = !!agentState.problemText;
   const hasSolution = agentState.solutionSteps.length > 0;
+  const hasCode = !!agentState.code;
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -191,13 +192,20 @@ export function TeacherModePanel({
         />
       )}
 
+      {/* Code status */}
+      {hasCode && !hasSolution && (
+        <div className="text-[12px] text-green-400/70 bg-green-500/10 rounded-lg px-3 py-2">
+          代码已生成，显示在右侧编辑器中。请审查后点击「生成动画」。
+        </div>
+      )}
+
       {/* Refinement Input */}
-      {hasSolution && !isRunning && (
+      {(hasSolution || hasCode) && !isRunning && (
         <div className="space-y-2.5 animate-fade-in">
           <Textarea
             value={refinement}
             onChange={(e) => setRefinement(e.target.value)}
-            placeholder="用自然语言描述你想要的修改，如第2步改用面积法、加一个坐标系可视化..."
+            placeholder="用自然语言描述你想要的修改，如加一个坐标系、改用面积法..."
             className="min-h-[72px] resize-none text-[14px]"
             disabled={busy}
           />
@@ -206,7 +214,7 @@ export function TeacherModePanel({
 
       {/* Action Buttons */}
       <div className="flex gap-2.5">
-        {!hasSolution ? (
+        {!hasCode ? (
           <Button
             onClick={onSolve}
             disabled={busy || (!hasProblem && !prompt.trim()) || !llmConfig.apiKey}
@@ -217,7 +225,7 @@ export function TeacherModePanel({
             ) : (
               <Sparkles className="h-4 w-4 mr-2" />
             )}
-            {isRunning ? "分析中..." : "生成解题"}
+            {isRunning ? "生成中..." : "生成解题动画"}
           </Button>
         ) : (
           <>
@@ -232,7 +240,7 @@ export function TeacherModePanel({
             </Button>
             <Button
               onClick={onRender}
-              disabled={busy || !hasJob}
+              disabled={busy}
               className="flex-1 h-10 text-[14px] font-semibold"
             >
               <Film className="h-4 w-4 mr-2" />
