@@ -28,6 +28,8 @@ async def analyze_image_style(
     content_type: str,
     llm_config: VisionLlmConfig,
 ) -> str:
+    import asyncio
+
     api_key = llm_config.api_key
     if not api_key:
         return "未配置视觉模型 API Key。"
@@ -35,32 +37,41 @@ async def analyze_image_style(
     client = AsyncOpenAI(
         api_key=api_key,
         base_url=llm_config.base_url or None,
+        timeout=30.0,
     )
 
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     mime_type = content_type or "image/png"
 
-    response = await client.chat.completions.create(
-        model=llm_config.model or "gpt-4o",
-        messages=[
-            {"role": "system", "content": VISION_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "分析这张图片的动画风格参考。"},
+    try:
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=llm_config.model or "gpt-4o",
+                messages=[
+                    {"role": "system", "content": VISION_SYSTEM_PROMPT},
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{b64_image}",
-                            "detail": "high",
-                        },
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "分析这张图片的动画风格参考。"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{b64_image}",
+                                    "detail": "high",
+                                },
+                            },
+                        ],
                     },
                 ],
-            },
-        ],
-        max_tokens=1000,
-        temperature=0.3,
-    )
+                max_tokens=1000,
+                temperature=0.3,
+            ),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError:
+        return "视觉模型调用超时（30秒）。"
+    except Exception as e:
+        return f"视觉模型调用失败: {e}"
 
     return response.choices[0].message.content or "无法分析图片。"
 
@@ -89,6 +100,7 @@ async def extract_math_problem(
     content_type: str,
     llm_config: VisionLlmConfig,
 ) -> dict:
+    import asyncio
     import json as _json
 
     api_key = llm_config.api_key
@@ -98,32 +110,41 @@ async def extract_math_problem(
     client = AsyncOpenAI(
         api_key=api_key,
         base_url=llm_config.base_url or None,
+        timeout=30.0,
     )
 
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     mime_type = content_type or "image/png"
 
-    response = await client.chat.completions.create(
-        model=llm_config.model or "gpt-4o",
-        messages=[
-            {"role": "system", "content": MATH_PROBLEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "提取这张图片中的数学题目。"},
+    try:
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=llm_config.model or "gpt-4o",
+                messages=[
+                    {"role": "system", "content": MATH_PROBLEM_PROMPT},
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{b64_image}",
-                            "detail": "high",
-                        },
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "提取这张图片中的数学题目。"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{b64_image}",
+                                    "detail": "high",
+                                },
+                            },
+                        ],
                     },
                 ],
-            },
-        ],
-        max_tokens=1500,
-        temperature=0.1,
-    )
+                max_tokens=1500,
+                temperature=0.1,
+            ),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError:
+        return {"error": "视觉模型调用超时（30秒），请检查 API 配置或换一个模型。"}
+    except Exception as e:
+        return {"error": f"视觉模型调用失败: {e}"}
 
     raw = response.choices[0].message.content or ""
     # Strip markdown fences if present

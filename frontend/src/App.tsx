@@ -160,8 +160,8 @@ export default function App() {
       }));
       const r = await apiFetch("/api/teacher/analyze", { method: "POST", body: formData }, token);
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        setStatus(typeof data.detail === "string" ? data.detail : "题目识别失败");
+      if (!r.ok || data.error) {
+        setStatus(data.error || typeof data.detail === "string" ? data.detail : "题目识别失败");
         return;
       }
       agentDispatch({
