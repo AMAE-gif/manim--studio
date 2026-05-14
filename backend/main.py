@@ -197,6 +197,11 @@ async def api_generate(
     from agent.tools import validate_syntax, check_manim_imports, render_animation
     from agent.workflow import _llm_chat
 
+    api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
+    base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
+    model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    api_format = (body.llm.api_format if body.llm and body.llm.api_format else "openai")
+
     # Step 1: Get code (generate or use pre-generated)
     if body.code:
         code = _strip_code_fences(body.code)
@@ -211,45 +216,64 @@ async def api_generate(
     job_dir = WORKDIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     script_path = job_dir / "scene.py"
-    script_path.write_text(code, encoding="utf-8")
 
-    # Step 2: Validate syntax
+    # Step 2: Syntax validate + auto-fix loop
+    fix_messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": body.prompt},
+    ]
+    for syntax_attempt in range(3):  # max 3 attempts
+        syntax = validate_syntax(code)
+        imports = check_manim_imports(code)
+        if syntax["passed"] and imports["valid"]:
+            break
+
+        # Syntax error — try to fix with LLM
+        error_detail = syntax.get("error") or str(imports.get("checks", {}))
+        log.warning("Syntax error (attempt %d): %s", syntax_attempt + 1, error_detail[:200])
+        if api_key and api_key != "__direct__":
+            fix_messages.append({"role": "assistant", "content": code})
+            fix_messages.append({"role": "user", "content": f"代码有语法错误：\n{error_detail}\n\n请修复语法错误，只输出完整的修复后 Python 代码。"})
+            try:
+                raw = await _llm_chat(messages=fix_messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+                code = _strip_code_fences(raw)
+                code = _ensure_scene(code)
+            except Exception as e:
+                log.error("Syntax fix LLM call failed: %s", e)
+                break
+        else:
+            break
+
+    # Final syntax check
     syntax = validate_syntax(code)
     imports = check_manim_imports(code)
     if not syntax["passed"] or not imports["valid"]:
         error = syntax.get("error") or str(imports.get("checks", {}))
-        raise HTTPException(status_code=422, detail=f"代码语法错误: {error}")
+        raise HTTPException(status_code=422, detail=f"代码语法错误（自动修复失败）: {error}")
+
+    script_path.write_text(code, encoding="utf-8")
 
     # Step 3: Render + auto-fix loop
     video_url = None
-    api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": body.prompt},
-    ]
-
-    for attempt in range(2):  # 1 initial + 1 fix
+    for render_attempt in range(3):  # max 3 attempts
         result = await render_animation(code, job_id)
         if result["passed"]:
             video_url = result.get("video_url")
             break
 
-        # Render failed — try auto-fix if we have an API key
-        if attempt == 0 and api_key and api_key != "__direct__":
-            error_msg = result.get("error", "Unknown error")[-2000:]
-            log.warning("Render failed (attempt %d), auto-fixing: %s", attempt + 1, error_msg[:300])
-            messages.append({"role": "assistant", "content": code})
-            messages.append({"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"})
+        # Render failed — try auto-fix
+        error_msg = result.get("error", "Unknown error")[-2000:]
+        log.warning("Render failed (attempt %d), auto-fixing: %s", render_attempt + 1, error_msg[:300])
+        if api_key and api_key != "__direct__":
+            fix_messages.append({"role": "assistant", "content": code})
+            fix_messages.append({"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文（用 Text()）\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"})
             try:
-                base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
-                model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-                api_format = (body.llm.api_format if body.llm and body.llm.api_format else "openai")
-                raw = await _llm_chat(messages=messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+                raw = await _llm_chat(messages=fix_messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
                 code = _strip_code_fences(raw)
                 code = _ensure_scene(code)
                 script_path.write_text(code, encoding="utf-8")
             except Exception as e:
-                log.error("Auto-fix LLM call failed: %s", e)
+                log.error("Render fix LLM call failed: %s", e)
                 break
         else:
             break
