@@ -6,7 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     texlive-latex-base texlive-latex-recommended \
     libcairo2-dev libpango1.0-dev pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+    fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/* \
+    && fc-cache -f -v
 
 WORKDIR /app
 COPY backend/requirements.txt .
