@@ -34,7 +34,8 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(() => {
     const s = loadLlmConfig();
-    return { apiKey: s.providers.find((p) => p.id === s.activeProviderId)?.apiKey || "", baseUrl: s.providers.find((p) => p.id === s.activeProviderId)?.baseUrl || "https://api.openai.com/v1", model: s.activeModel };
+    const p = s.providers.find((pp) => pp.id === s.activeProviderId);
+    return { apiKey: p?.apiKey || "", baseUrl: p?.baseUrl || "https://api.openai.com/v1", model: s.activeModel, apiFormat: (p?.apiFormat as "openai" | "anthropic") || "openai" };
   });
   const [visionConfig, setVisionConfig] = useState<VisionConfig>(() => {
     const s = loadLlmConfig();
@@ -197,7 +198,7 @@ export default function App() {
         image_base64: agentState.imageBase64 || null,
         content_type: "image/png",
         llm: llmConfig.apiKey
-          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model }
+          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
           : null,
         vision_llm: {
           api_key: resolvedVision.apiKey,
@@ -260,7 +261,7 @@ export default function App() {
         refinement: instruction,
         step_index: stepIndex,
         llm: llmConfig.apiKey
-          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model }
+          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
           : null,
         vision_llm: {
           api_key: resolvedVision.apiKey,
@@ -317,7 +318,7 @@ export default function App() {
       {
         prompt,
         llm: llmConfig.apiKey
-          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model }
+          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
           : null,
         style_analysis: agentState.styleAnalysis || null,
         rules: {
@@ -373,7 +374,7 @@ export default function App() {
           body: JSON.stringify({
             prompt,
             llm: llmConfig.apiKey
-              ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model }
+              ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
               : null,
           }),
         },

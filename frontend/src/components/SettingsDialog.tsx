@@ -15,6 +15,7 @@ export interface LlmConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  apiFormat: "openai" | "anthropic";
 }
 
 export interface VisionConfig {
@@ -30,6 +31,7 @@ interface Provider {
   baseUrl: string;
   apiKey: string;
   models: string[];
+  apiFormat: "openai" | "anthropic";
 }
 
 interface SettingsState {
@@ -42,14 +44,13 @@ interface SettingsState {
 const STORAGE_KEY = "manim-studio-settings-v2";
 
 const BUILT_IN_PROVIDERS: Omit<Provider, "id">[] = [
-  { name: "OpenAI", baseUrl: "https://api.openai.com/v1", apiKey: "", models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"] },
-  { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", apiKey: "", models: ["deepseek-chat", "deepseek-reasoner"] },
-  { name: "通义千问", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", apiKey: "", models: ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-vl-max", "qwen-vl-plus"] },
-  { name: "智谱", baseUrl: "https://open.bigmodel.cn/api/paas/v4", apiKey: "", models: ["glm-4", "glm-4-flash", "glm-4v", "glm-4v-flash"] },
-  { name: "月之暗面", baseUrl: "https://api.moonshot.cn/v1", apiKey: "", models: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"] },
-  { name: "硅基流动", baseUrl: "https://api.siliconflow.cn/v1", apiKey: "", models: ["XiaoMi/MiMo-7B-RL", "Qwen/Qwen2.5-72B-Instruct", "Qwen/Qwen2-VL-72B-Instruct", "deepseek-ai/DeepSeek-V3"] },
-  { name: "Groq", baseUrl: "https://api.groq.com/openai/v1", apiKey: "", models: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"] },
-  { name: "小米 MiMo", baseUrl: "https://api.siliconflow.cn/v1", apiKey: "", models: ["XiaoMi/MiMo-7B-RL"] },
+  { name: "OpenAI", baseUrl: "https://api.openai.com/v1", apiKey: "", models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"], apiFormat: "openai" },
+  { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", apiKey: "", models: ["deepseek-chat", "deepseek-reasoner"], apiFormat: "openai" },
+  { name: "通义千问", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", apiKey: "", models: ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-vl-max", "qwen-vl-plus"], apiFormat: "openai" },
+  { name: "智谱", baseUrl: "https://open.bigmodel.cn/api/paas/v4", apiKey: "", models: ["glm-4", "glm-4-flash", "glm-4v", "glm-4v-flash"], apiFormat: "openai" },
+  { name: "月之暗面", baseUrl: "https://api.moonshot.cn/v1", apiKey: "", models: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"], apiFormat: "openai" },
+  { name: "硅基流动", baseUrl: "https://api.siliconflow.cn/v1", apiKey: "", models: ["Qwen/Qwen2.5-72B-Instruct", "Qwen/Qwen2-VL-72B-Instruct", "deepseek-ai/DeepSeek-V3"], apiFormat: "openai" },
+  { name: "Groq", baseUrl: "https://api.groq.com/openai/v1", apiKey: "", models: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"], apiFormat: "openai" },
 ];
 
 function generateId() {
@@ -70,11 +71,19 @@ function loadSettings(): SettingsState {
             baseUrl: parsed.baseUrl || "https://api.openai.com/v1",
             apiKey: parsed.apiKey || "",
             models: [parsed.model || "gpt-4o-mini"],
+            apiFormat: "openai",
           }],
           activeProviderId: null,
           activeModel: parsed.model || "gpt-4o-mini",
           vision: parsed.vision || { useSameAsCode: true, apiKey: "", baseUrl: "https://api.openai.com/v1", model: "gpt-4o" },
         };
+      }
+      // Migrate: add apiFormat to providers that don't have it
+      if (parsed.providers) {
+        parsed.providers = parsed.providers.map((p: Record<string, unknown>) => ({
+          ...p,
+          apiFormat: p.apiFormat || "openai",
+        }));
       }
       return parsed;
     }
@@ -95,9 +104,22 @@ function getActiveProvider(state: SettingsState): Provider | null {
   return state.providers.find((p) => p.id === state.activeProviderId) || null;
 }
 
+function guessVisionModel(baseUrl: string): string {
+  const url = baseUrl.toLowerCase();
+  if (url.includes("openai.com")) return "gpt-4o";
+  if (url.includes("deepseek")) return "deepseek-chat"; // DeepSeek has no vision model; will fail gracefully
+  if (url.includes("dashscope") || url.includes("aliyuncs")) return "qwen-vl-max";
+  if (url.includes("bigmodel.cn")) return "glm-4v";
+  if (url.includes("moonshot")) return "moonshot-v1-8k"; // Moonshot has no vision; fallback
+  if (url.includes("siliconflow")) return "Qwen/Qwen2-VL-72B-Instruct";
+  if (url.includes("groq.com")) return "llama-3.3-70b-versatile"; // Groq has no vision
+  return "gpt-4o"; // default
+}
+
 export function resolveVisionConfig(code: LlmConfig, vision: VisionConfig): { apiKey: string; baseUrl: string; model: string } {
   if (vision.useSameAsCode) {
-    return { apiKey: code.apiKey, baseUrl: code.baseUrl, model: "gpt-4o" };
+    const model = guessVisionModel(code.baseUrl);
+    return { apiKey: code.apiKey, baseUrl: code.baseUrl, model };
   }
   return { apiKey: vision.apiKey, baseUrl: vision.baseUrl, model: vision.model };
 }
@@ -126,8 +148,8 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
 
   const getLlmConfig = (s: SettingsState): LlmConfig => {
     const provider = s.providers.find((p) => p.id === s.activeProviderId);
-    if (!provider) return { apiKey: "", baseUrl: "https://api.openai.com/v1", model: s.activeModel };
-    return { apiKey: provider.apiKey, baseUrl: provider.baseUrl, model: s.activeModel };
+    if (!provider) return { apiKey: "", baseUrl: "https://api.openai.com/v1", model: s.activeModel, apiFormat: "openai" };
+    return { apiKey: provider.apiKey, baseUrl: provider.baseUrl, model: s.activeModel, apiFormat: provider.apiFormat || "openai" };
   };
 
   const selectProvider = (providerId: string) => {
@@ -157,6 +179,7 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
       baseUrl: "",
       apiKey: "",
       models: ["custom-model"],
+      apiFormat: "openai",
     };
     update({
       providers: [...settings.providers, provider],
@@ -317,6 +340,24 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
                   placeholder="API Key"
                   className="text-[13px] h-9"
                 />
+                <div className="flex items-center gap-2">
+                  <label className="text-[12px] text-white/40 whitespacenowrap">API 格式</label>
+                  <div className="flex rounded-lg bg-white/[0.04] border border-white/[0.06] p-0.5">
+                    {(["openai", "anthropic"] as const).map((fmt) => (
+                      <button
+                        key={fmt}
+                        onClick={() => updateProvider(activeProvider.id, { apiFormat: fmt })}
+                        className={`px-3 py-1 rounded-md text-[12px] font-medium transition-all duration-200 ${
+                          activeProvider.apiFormat === fmt
+                            ? "bg-blue-500/15 text-blue-400"
+                            : "text-white/40 hover:text-white/60"
+                        }`}
+                      >
+                        {fmt === "openai" ? "OpenAI" : "Anthropic"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               {/* Model List */}
@@ -376,6 +417,16 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
               />
               使用与代码模型相同的 API Key
             </label>
+            {settings.vision.useSameAsCode && activeProvider && (
+              <p className="text-[11px] text-amber-400/60">
+                将自动使用 {activeProvider.baseUrl.includes("openai.com") ? "gpt-4o"
+                  : activeProvider.baseUrl.includes("dashscope") ? "qwen-vl-max"
+                  : activeProvider.baseUrl.includes("bigmodel.cn") ? "glm-4v"
+                  : activeProvider.baseUrl.includes("siliconflow") ? "Qwen2-VL-72B"
+                  : activeProvider.baseUrl.includes("deepseek") ? "deepseek-chat（不支持图像）"
+                  : "gpt-4o"} 作为视觉模型
+              </p>
+            )}
             {!settings.vision.useSameAsCode && (
               <div className="space-y-2">
                 <Input
@@ -401,6 +452,11 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
             />
             <p className="text-[11px] text-white/25">
               支持图像的模型：gpt-4o, gpt-4o-mini, qwen-vl-max, qwen-vl-plus, glm-4v, glm-4v-flash 等
+              {settings.vision.useSameAsCode && activeProvider?.baseUrl.includes("deepseek") && (
+                <span className="text-amber-400/80 block mt-1">
+                  DeepSeek 不支持图像识别，请取消勾选上方选项，单独配置视觉模型。
+                </span>
+              )}
             </p>
           </div>
         </div>

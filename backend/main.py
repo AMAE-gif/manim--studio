@@ -372,6 +372,41 @@ def debug_env():
     return result
 
 
+@app.post("/api/debug-llm")
+async def debug_llm(body: dict):
+    """Debug: test LLM connection with a simple request."""
+    import traceback
+    base_url = body.get("base_url", "")
+    api_key = body.get("api_key", "")
+    model = body.get("model", "")
+    api_format = body.get("api_format", "openai")
+    log.info("Debug LLM - base_url: %s, model: %s, api_format: %s, api_key_len: %d", base_url, model, api_format, len(api_key))
+
+    try:
+        if api_format == "anthropic":
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic(api_key=api_key, base_url=base_url or None, timeout=30.0)
+            response = await client.messages.create(
+                model=model,
+                max_tokens=50,
+                messages=[{"role": "user", "content": "say hello"}],
+            )
+            return {"ok": True, "reply": response.content[0].text, "model_used": model}
+        else:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=api_key, base_url=base_url or None, timeout=30.0)
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "say hello"}],
+                max_tokens=50,
+            )
+            return {"ok": True, "reply": response.choices[0].message.content, "model_used": model}
+    except Exception as e:
+        tb = traceback.format_exc()
+        log.error("Debug LLM failed: %s\n%s", e, tb)
+        return {"ok": False, "error": str(e), "traceback": tb}
+
+
 @app.post("/api/debug-vision")
 async def debug_vision(
     file: UploadFile,

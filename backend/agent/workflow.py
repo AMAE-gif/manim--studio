@@ -9,8 +9,6 @@ import uuid
 from pathlib import Path
 from typing import AsyncGenerator
 
-from openai import AsyncOpenAI
-
 from .models import AnimationRules, LlmConfig, VisionLlmConfig
 from .prompts import build_system_prompt, TEACHER_SOLVE_PROMPT, TEACHER_REFINE_PROMPT, TEACHER_TO_MANIM_PROMPT
 from .tools import (
@@ -23,6 +21,53 @@ from .tools import (
 from .vision import extract_math_problem
 
 log = logging.getLogger(__name__)
+
+
+async def _llm_chat(
+    messages: list[dict],
+    model: str,
+    api_key: str,
+    base_url: str | None = None,
+    api_format: str = "openai",
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+) -> str:
+    """Unified LLM chat call supporting both OpenAI and Anthropic formats."""
+    log.info("_llm_chat - format: %s, model: %s, base_url: %s", api_format, model, base_url)
+    if api_format == "anthropic":
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=api_key, base_url=base_url or None)
+        log.info("Anthropic client base_url: %s, will call: %s/v1/messages", client.base_url, client.base_url)
+        # Anthropic: system prompt is a top-level param, not in messages
+        system_content = ""
+        user_messages = []
+        for m in messages:
+            if m["role"] == "system":
+                system_content += m["content"] + "\n"
+            else:
+                user_messages.append(m)
+        if not user_messages:
+            user_messages = [{"role": "user", "content": "Hello"}]
+
+        response = await client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system_content.strip() or None,
+            messages=user_messages,
+            temperature=temperature,
+        )
+        return response.content[0].text
+    else:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+        response = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+        )
+        return response.choices[0].message.content or ""
 
 
 def _event(step: str, message: str) -> dict:
@@ -44,8 +89,9 @@ async def run_agent_workflow(
 
     base_url = (llm_config.base_url if llm_config and llm_config.base_url else None)
     model = (llm_config.model if llm_config and llm_config.model else "gpt-4o-mini")
+    api_format = (llm_config.api_format if llm_config and llm_config.api_format else "openai")
 
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+    log.info("LLM request - base_url: %s, model: %s, api_format: %s, api_key_len: %d", base_url, model, api_format, len(api_key or ""))
 
     job_id = str(uuid.uuid4())
     job_dir = WORKDIR / job_id
@@ -70,16 +116,24 @@ async def run_agent_workflow(
         t_gen = time.time()
 
         try:
-            response = await client.chat.completions.create(
-                model=model,
+            raw_content = await _llm_chat(
                 messages=messages,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                api_format=api_format,
                 temperature=0.3,
             )
         except Exception as e:
-            yield {"event": "error", "data": {"message": f"LLM 调用失败: {e}", "recoverable": False}}
+            err_msg = str(e)
+            # Provide helpful hints for common errors
+            if "404" in err_msg or "Not Found" in err_msg:
+                err_msg = f"接口返回 404 Not Found。\n\n可能原因：\n1) Base URL 不正确（当前: {base_url}）\n2) 模型名不正确（当前: {model}）\n3) 该 API 地址已变更，请到设置中检查 Provider 配置"
+            elif "401" in err_msg or "403" in err_msg:
+                err_msg += "\n\nAPI Key 无效或已过期，请检查设置。"
+            log.error("LLM call failed: %s", e)
+            yield {"event": "error", "data": {"message": f"LLM 调用失败: {err_msg}", "recoverable": False}}
             return
-
-        raw_content = response.choices[0].message.content or ""
 
         code = extract_code_from_response(raw_content)
         yield {"event": "code_generated", "data": {"code": code, "duration": round(time.time() - t_gen, 1)}}
@@ -192,8 +246,9 @@ async def run_teacher_workflow(
 
     base_url = llm_config.base_url if llm_config and llm_config.base_url else None
     model = llm_config.model if llm_config and llm_config.model else "gpt-4o-mini"
+    api_format = (llm_config.api_format if llm_config and llm_config.api_format else "openai")
 
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+    log.info("Teacher LLM request - base_url: %s, model: %s, api_format: %s, api_key_len: %d", base_url, model, api_format, len(api_key or ""))
 
     job_id = str(uuid.uuid4())
     job_dir = WORKDIR / job_id
@@ -215,15 +270,28 @@ async def run_teacher_workflow(
 
         vision_config = vision_llm_config or VisionLlmConfig()
         if not vision_config.api_key:
-            vision_config = VisionLlmConfig(api_key=api_key, base_url=base_url, model="gpt-4o")
+            # Guess correct vision model based on provider base URL
+            _url = (base_url or "").lower()
+            if "dashscope" in _url or "aliyuncs" in _url:
+                _vision_model = "qwen-vl-max"
+            elif "bigmodel.cn" in _url:
+                _vision_model = "glm-4v"
+            elif "siliconflow" in _url:
+                _vision_model = "Qwen/Qwen2-VL-72B-Instruct"
+            else:
+                _vision_model = "gpt-4o"
+            vision_config = VisionLlmConfig(api_key=api_key, base_url=base_url, model=_vision_model)
 
         import base64 as _b64
         image_bytes = _b64.b64decode(image_base64)
 
         result = await extract_math_problem(image_bytes, content_type, vision_config)
+        if "error" in result:
+            yield {"event": "error", "data": {"message": f"题目识别失败：{result['error']}", "recoverable": False}}
+            return
         problem_text = result.get("problem_text", "")
         if not problem_text:
-            yield {"event": "error", "data": {"message": "无法识别题目内容。", "recoverable": False}}
+            yield {"event": "error", "data": {"message": "无法识别题目内容。请检查视觉模型配置是否正确（模型需支持图像输入）。", "recoverable": False}}
             return
 
         yield {
@@ -266,15 +334,13 @@ async def run_teacher_workflow(
         ]
 
         try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.3,
-            )
-            raw = response.choices[0].message.content or ""
+            raw = await _llm_chat(messages=messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
             solution_data = _parse_json_response(raw)
         except Exception as e:
-            yield {"event": "error", "data": {"message": f"修正失败: {e}", "recoverable": False}}
+            err_msg = str(e)
+            if "404" in err_msg or "Not Found" in err_msg:
+                err_msg = f"接口返回 404 Not Found。请检查 Base URL（{base_url}）和模型名（{model}）是否正确。"
+            yield {"event": "error", "data": {"message": f"修正失败: {err_msg}", "recoverable": False}}
             return
 
         if not solution_data:
@@ -300,15 +366,13 @@ async def run_teacher_workflow(
         ]
 
         try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.3,
-            )
-            raw = response.choices[0].message.content or ""
+            raw = await _llm_chat(messages=messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
             solution_data = _parse_json_response(raw)
         except Exception as e:
-            yield {"event": "error", "data": {"message": f"解题失败: {e}", "recoverable": False}}
+            err_msg = str(e)
+            if "404" in err_msg or "Not Found" in err_msg:
+                err_msg = f"接口返回 404 Not Found。请检查 Base URL（{base_url}）和模型名（{model}）是否正确。"
+            yield {"event": "error", "data": {"message": f"解题失败: {err_msg}", "recoverable": False}}
             return
 
         if not solution_data:
@@ -347,16 +411,19 @@ async def run_teacher_workflow(
 
     t_gen = time.time()
     try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=gen_messages,
-            temperature=0.3,
+        raw_content = await _llm_chat(
+            messages=gen_messages, model=model, api_key=api_key,
+            base_url=base_url, api_format=api_format, temperature=0.3,
         )
     except Exception as e:
-        yield {"event": "error", "data": {"message": f"LLM 调用失败: {e}", "recoverable": False}}
+        err_msg = str(e)
+        if "404" in err_msg or "Not Found" in err_msg:
+            err_msg = f"接口返回 404 Not Found。\n\n可能原因：\n1) Base URL 不正确（当前: {base_url}）\n2) 模型名不正确（当前: {model}）\n3) 该 API 地址已变更，请到设置中检查 Provider 配置"
+        elif "401" in err_msg or "403" in err_msg:
+            err_msg += "\n\nAPI Key 无效或已过期，请检查设置。"
+        log.error("LLM call failed: %s", e)
+        yield {"event": "error", "data": {"message": f"LLM 调用失败: {err_msg}", "recoverable": False}}
         return
-
-    raw_content = response.choices[0].message.content or ""
     code = extract_code_from_response(raw_content)
     yield {"event": "code_generated", "data": {"code": code, "duration": round(time.time() - t_gen, 1)}}
 
@@ -383,12 +450,10 @@ async def run_teacher_workflow(
 
         yield _event("correct", "正在修正代码...")
         try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=gen_messages,
-                temperature=0.3,
+            raw_content = await _llm_chat(
+                messages=gen_messages, model=model, api_key=api_key,
+                base_url=base_url, api_format=api_format, temperature=0.3,
             )
-            raw_content = response.choices[0].message.content or ""
             code = extract_code_from_response(raw_content)
             yield {"event": "code_generated", "data": {"code": code, "duration": 0}}
 
