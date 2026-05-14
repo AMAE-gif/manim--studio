@@ -47,3 +47,4 @@ class TeacherModeSubmit(BaseModel):
     session_id: str | None = None
     refinement: str | None = None
     step_index: int | None = None
+    phase: str = "direct"  # "direct" (题目→代码,1次调用) | "full" (题目→解题→代码,2次调用)

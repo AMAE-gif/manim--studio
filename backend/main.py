@@ -648,6 +648,7 @@ async def api_teacher_submit(body: TeacherModeSubmit):
         session_id=body.session_id,
         refinement=body.refinement,
         step_index=body.step_index,
+        phase=body.phase,
     )
     return {
         "job_id": job_id,
@@ -667,6 +668,7 @@ async def submit_teacher_job(
     session_id: str | None = None,
     refinement: str | None = None,
     step_index: int | None = None,
+    phase: str = "direct",
 ) -> tuple[str, int]:
     """Submit a teacher workflow job to the queue."""
     import asyncio as _asyncio
@@ -694,6 +696,7 @@ async def submit_teacher_job(
                 session_id=session_id,
                 refinement=refinement,
                 step_index=step_index,
+                phase=phase,
             ):
                 job.events.append(event)
                 if event["event"] == "complete":

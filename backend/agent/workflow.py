@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from .models import AnimationRules, LlmConfig, VisionLlmConfig
-from .prompts import build_system_prompt, TEACHER_SOLVE_PROMPT, TEACHER_REFINE_PROMPT, TEACHER_TO_MANIM_PROMPT
+from .prompts import build_system_prompt, TEACHER_SOLVE_PROMPT, TEACHER_REFINE_PROMPT, TEACHER_TO_MANIM_PROMPT, TEACHER_DIRECT_PROMPT
 from .tools import (
     extract_code_from_response,
     render_animation,
@@ -238,6 +238,7 @@ async def run_teacher_workflow(
     session_id: str | None = None,
     refinement: str | None = None,
     step_index: int | None = None,
+    phase: str = "direct",
 ) -> AsyncGenerator[dict, None]:
     api_key = llm_config.api_key if llm_config and llm_config.api_key else None
     if not api_key:
@@ -355,6 +356,9 @@ async def run_teacher_workflow(
                 "refinement_applied": refinement,
             },
         }
+    elif phase == "direct":
+        # Direct mode: skip solve, go straight to code generation
+        pass
     else:
         # Phase 2: SOLVE
         yield _event("solve", "正在分析解题步骤...")
@@ -398,10 +402,13 @@ async def run_teacher_workflow(
     # ── Phase 4: GENERATE Manim code ──
     yield _event("generate", "正在生成 Manim 动画代码...")
 
-    gen_prompt = TEACHER_TO_MANIM_PROMPT.format(
-        problem_text=problem_text,
-        solution_json=json.dumps(solution_data, ensure_ascii=False, indent=2),
-    )
+    if phase == "direct" or not solution_data:
+        gen_prompt = TEACHER_DIRECT_PROMPT.format(problem_text=problem_text)
+    else:
+        gen_prompt = TEACHER_TO_MANIM_PROMPT.format(
+            problem_text=problem_text,
+            solution_json=json.dumps(solution_data, ensure_ascii=False, indent=2),
+        )
 
     system_prompt = build_system_prompt(rules=rules, style_analysis=style_analysis)
     gen_messages = [
