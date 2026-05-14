@@ -118,30 +118,7 @@ const KNOWN_VISION_MODELS: Record<string, string> = {
   "groq": "",        // no vision
 };
 
-// User-learned vision model preferences (per base URL)
-const VISION_LEARN_KEY = "manim-studio-vision-learn";
-
-function loadVisionLearn(): Record<string, string> {
-  try { return JSON.parse(localStorage.getItem(VISION_LEARN_KEY) || "{}"); } catch { return {}; }
-}
-
-function saveVisionLearn(map: Record<string, string>) {
-  localStorage.setItem(VISION_LEARN_KEY, JSON.stringify(map));
-}
-
-/** Remember that user chose this vision model for a given base URL. */
-export function learnVisionModel(baseUrl: string, model: string) {
-  const map = loadVisionLearn();
-  map[baseUrl] = model;
-  saveVisionLearn(map);
-}
-
 function guessVisionModel(baseUrl: string): string {
-  // 1. Check user-learned preference first
-  const learned = loadVisionLearn();
-  if (learned[baseUrl]) return learned[baseUrl];
-
-  // 2. Check known providers
   const url = baseUrl.toLowerCase();
   for (const [pattern, model] of Object.entries(KNOWN_VISION_MODELS)) {
     if (url.includes(pattern)) return model;
@@ -265,19 +242,7 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
   };
 
   const handleSave = () => {
-    // Learn: if user configured vision model separately, remember it for this provider
-    if (!settings.vision.useSameAsCode && settings.vision.model && activeProvider) {
-      learnVisionModel(activeProvider.baseUrl, settings.vision.model);
-    }
     const llm = getLlmConfig(settings);
-    console.log("Settings save:", {
-      activeProvider: activeProvider?.name,
-      api_key: llm.apiKey ? "***" + llm.apiKey.slice(-4) : "(empty)",
-      baseUrl: llm.baseUrl,
-      model: llm.model,
-      apiFormat: llm.apiFormat,
-      vision: settings.vision,
-    });
     saveSettings(settings);
     onConfigChange?.(llm);
     onVisionChange?.(settings.vision);
