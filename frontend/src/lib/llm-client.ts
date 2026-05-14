@@ -134,7 +134,9 @@ async function callAnthropic(opts: {
   }
 
   const data = await res.json();
-  return data.content?.[0]?.text ?? "";
+  // Skip thinking blocks, find first text block
+  const textBlock = (data.content ?? []).find((b: { type: string }) => b.type === "text");
+  return textBlock?.text ?? "";
 }
 
 /**
@@ -278,5 +280,7 @@ async function callVisionAnthropic(opts: {
   }
 
   const data = await res.json();
-  return data.content?.[0]?.text ?? "";
+  // Skip thinking blocks, find first text block
+  const textBlock = (data.content ?? []).find((b: { type: string }) => b.type === "text");
+  return textBlock?.text ?? "";
 }
