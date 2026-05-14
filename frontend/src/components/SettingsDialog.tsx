@@ -267,8 +267,17 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
     if (!settings.vision.useSameAsCode && settings.vision.model && activeProvider) {
       learnVisionModel(activeProvider.baseUrl, settings.vision.model);
     }
+    const llm = getLlmConfig(settings);
+    console.log("Settings save:", {
+      activeProvider: activeProvider?.name,
+      api_key: llm.apiKey ? "***" + llm.apiKey.slice(-4) : "(empty)",
+      baseUrl: llm.baseUrl,
+      model: llm.model,
+      apiFormat: llm.apiFormat,
+      vision: settings.vision,
+    });
     saveSettings(settings);
-    onConfigChange?.(getLlmConfig(settings));
+    onConfigChange?.(llm);
     onVisionChange?.(settings.vision);
     setOpen(false);
   };

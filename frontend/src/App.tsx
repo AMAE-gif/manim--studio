@@ -135,8 +135,11 @@ export default function App() {
 
   // Teacher mode handlers
   const onTeacherAnalyze = async (file: File) => {
+    console.log("onTeacherAnalyze - resolvedVision:", resolvedVision);
+    console.log("onTeacherAnalyze - llmConfig:", { ...llmConfig, apiKey: llmConfig.apiKey ? "***" + llmConfig.apiKey.slice(-4) : "(empty)" });
+    console.log("onTeacherAnalyze - visionConfig:", visionConfig);
     if (!resolvedVision.apiKey) {
-      setStatus("视觉模型 API Key 未配置。请在设置中勾选'使用与代码模型相同的 API Key'，或单独填写视觉模型的 API Key 和 Base URL。");
+      setStatus(`视觉模型 API Key 未配置。当前代码模型 API Key: ${llmConfig.apiKey ? "已配置" : "未配置"}。请在设置中勾选"使用与代码模型相同的 API Key"，或单独填写视觉模型的 API Key。`);
       return;
     }
     setBusy(true);
