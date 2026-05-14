@@ -135,6 +135,10 @@ export default function App() {
 
   // Teacher mode handlers
   const onTeacherAnalyze = async (file: File) => {
+    if (!resolvedVision.apiKey) {
+      setStatus("视觉模型 API Key 未配置。请在设置中勾选'使用与代码模型相同的 API Key'，或单独填写视觉模型的 API Key 和 Base URL。");
+      return;
+    }
     setBusy(true);
     agentDispatch({ type: "RESET" });
     try {
@@ -154,11 +158,13 @@ export default function App() {
 
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("vision_llm", JSON.stringify({
+      const visionPayload = {
         api_key: resolvedVision.apiKey,
         base_url: resolvedVision.baseUrl || undefined,
         model: resolvedVision.model || "gpt-4o",
-      }));
+      };
+      console.log("Vision config sent:", { ...visionPayload, api_key: visionPayload.api_key ? "***" + visionPayload.api_key.slice(-4) : "(empty)" });
+      formData.append("vision_llm", JSON.stringify(visionPayload));
       const r = await apiFetch("/api/teacher/analyze", { method: "POST", body: formData }, token);
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -519,6 +525,12 @@ export default function App() {
   };
 
   const resolvedVision = resolveVisionConfig(llmConfig, visionConfig);
+  // Debug: log vision config on render
+  if (resolvedVision.apiKey) {
+    console.log("resolvedVision:", { model: resolvedVision.model, baseUrl: resolvedVision.baseUrl, apiKey: "***" + resolvedVision.apiKey.slice(-4) });
+  } else {
+    console.log("resolvedVision: API KEY EMPTY!", { visionConfig, llmConfigBaseUrl: llmConfig.baseUrl });
+  }
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
