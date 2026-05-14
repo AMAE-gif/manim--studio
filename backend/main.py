@@ -594,8 +594,12 @@ async def api_teacher_analyze(
     image_bytes = await file.read()
 
     _log.getLogger("teacher").info(
-        "Analyze request - model: %s, base_url: %s, api_key_len: %d, image_size: %d, content_type: %s, raw_vision_llm: %s",
-        config.model, config.base_url, len(config.api_key or ""), len(image_bytes), file.content_type, vision_llm[:200],
+        "Analyze RAW vision_llm: %s",
+        vision_llm[:500],
+    )
+    _log.getLogger("teacher").info(
+        "Analyze PARSED - model: %s, base_url: %s, api_key_len: %d, image_size: %d",
+        config.model, config.base_url, len(config.api_key or ""), len(image_bytes),
     )
 
     if not config.api_key:
@@ -614,6 +618,10 @@ async def api_teacher_analyze(
 async def api_teacher_submit(body: TeacherModeSubmit):
     """Submit teacher mode job (solve + generate or refine + generate)."""
     from agent.models import LlmConfig, AnimationRules
+
+    log.info("Teacher submit - llm: %s, vision_llm: %s",
+             f"api_key={'yes' if body.llm and body.llm.api_key else 'no'}, model={body.llm.model if body.llm else None}",
+             f"api_key={'yes' if body.vision_llm and body.vision_llm.api_key else 'no'}, model={body.vision_llm.model if body.vision_llm else None}")
 
     job_id, pending = await submit_teacher_job(
         image_base64=body.image_base64,
