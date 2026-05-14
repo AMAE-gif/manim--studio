@@ -224,7 +224,7 @@ export default function App() {
 
     await submitAndStreamTeacher(
       {
-        prompt: prompt || agentState.problemText,
+        prompt: agentState.problemText || prompt,
         image_base64: agentState.imageBase64 || null,
         content_type: "image/png",
         llm: freshLlm.apiKey
