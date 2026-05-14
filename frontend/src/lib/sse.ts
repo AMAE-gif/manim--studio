@@ -35,7 +35,7 @@ function dispatchEvent(eventType: string, data: Record<string, unknown>, callbac
       callbacks.onRenderResult?.(data as { passed: boolean; error?: string; video_url?: string; duration?: number });
       break;
     case "complete":
-      callbacks.onComplete?.(data as { code: string; video_url?: string; job_id: string; total_duration?: number });
+      callbacks.onComplete?.(data as { code: string; video_url?: string; job_id: string; session_id?: string; total_duration?: number });
       break;
     case "error":
       callbacks.onError?.(data as { message: string; recoverable?: boolean });

@@ -47,6 +47,16 @@ export default function App() {
 
   const token = session?.access_token ?? null;
 
+  // Reset all state when switching modes so each mode is independent
+  useEffect(() => {
+    setCode("");
+    setVideoUrl(null);
+    setJobId(null);
+    setSelectedProjectId(null);
+    setStatus("");
+    agentDispatch({ type: "RESET" });
+  }, [mode]);
+
   const refreshHealth = useCallback(async () => {
     try {
       const r = await apiFetch("/api/health");
@@ -637,7 +647,6 @@ export default function App() {
                     onRefine={onTeacherRefine}
                     onRender={onRender}
                     busy={busy}
-                    hasJob={!!jobId}
                   />
                 ) : mode === "agent" ? (
                   <AgentPanel

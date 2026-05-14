@@ -128,8 +128,7 @@ def _ensure_scene(code: str) -> str:
     return code
 
 
-def generate_manim_code(user_prompt: str, llm: LlmConfig | None = None) -> str:
-    import asyncio
+async def generate_manim_code(user_prompt: str, llm: LlmConfig | None = None) -> str:
     from agent.workflow import _llm_chat
 
     api_key = (llm.api_key if llm and llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
@@ -147,10 +146,10 @@ def generate_manim_code(user_prompt: str, llm: LlmConfig | None = None) -> str:
         {"role": "user", "content": user_prompt},
     ]
     try:
-        raw = asyncio.run(_llm_chat(
+        raw = await _llm_chat(
             messages=messages, model=model, api_key=api_key,
             base_url=base_url, api_format=api_format, temperature=0.3,
-        ))
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM 调用失败: {e!s}") from e
 
@@ -170,11 +169,11 @@ def find_manim_video(job_dir: Path) -> Path | None:
 
 
 @app.post("/api/generate", response_model=GenerateResponse)
-def api_generate(
+async def api_generate(
     body: GenerateBody,
     user_id: UUID | None = Depends(get_optional_user),
 ):
-    code = generate_manim_code(body.prompt, body.llm)
+    code = await generate_manim_code(body.prompt, body.llm)
     job_id = str(uuid.uuid4())
     job_dir = WORKDIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)

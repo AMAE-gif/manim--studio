@@ -18,7 +18,6 @@ interface TeacherModePanelProps {
   onRefine: (instruction: string, stepIndex: number | null) => void;
   onRender: () => void;
   busy: boolean;
-  hasJob: boolean;
 }
 
 export function TeacherModePanel({
@@ -32,7 +31,6 @@ export function TeacherModePanel({
   onRefine,
   onRender,
   busy,
-  hasJob,
 }: TeacherModePanelProps) {
   const [preview, setPreview] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
