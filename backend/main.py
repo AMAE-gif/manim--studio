@@ -362,5 +362,7 @@ def health():
 @app.get("/api/debug-env")
 def debug_env():
     """Temporary: check which env vars exist (length only, no secrets)."""
-    vars_to_check = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_JWT_SECRET"]
-    return {v: len(os.environ.get(v, "")) for v in vars_to_check}
+    vars_to_check = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_JWT_SECRET", "ALLOWED_ORIGINS"]
+    result = {v: len(os.environ.get(v, "")) for v in vars_to_check}
+    result["cors_origins"] = _allowed_cors_origins()
+    return result
