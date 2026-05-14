@@ -1,16 +1,20 @@
-import { useCallback, useEffect, useState } from "react"; // redeploy
+import { useCallback, useEffect, useReducer, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { apiFetch, resolveMediaUrl } from "./lib/api";
 import { supabase } from "./lib/supabase";
 import type { Health, ProjectRow } from "./lib/types";
+import { streamAgentGenerate } from "./lib/sse";
+import { agentReducer, initialState } from "./lib/agent-store";
+import type { VisionConfig } from "./components/SettingsDialog";
 
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { PromptPanel } from "./components/PromptPanel";
+import { AgentPanel } from "./components/AgentPanel";
 import { CodeEditor } from "./components/CodeEditor";
 import { VideoPreview } from "./components/VideoPreview";
 import { StatusBar } from "./components/StatusBar";
-import { loadLlmConfig } from "./components/SettingsDialog";
+import { loadLlmConfig, resolveVisionConfig } from "./components/SettingsDialog";
 import type { LlmConfig } from "./components/SettingsDialog";
 
 export default function App() {
@@ -28,6 +32,15 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(loadLlmConfig);
+  const [visionConfig, setVisionConfig] = useState<VisionConfig>({
+    useSameAsCode: true,
+    apiKey: "",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o",
+  });
+  const [agentMode, setAgentMode] = useState(true);
+
+  const [agentState, agentDispatch] = useReducer(agentReducer, initialState);
 
   const token = session?.access_token ?? null;
 
@@ -79,7 +92,94 @@ export default function App() {
     void loadProjects();
   }, [loadProjects]);
 
-  const onGenerate = async () => {
+  // Listen for custom events from AgentPanel
+  useEffect(() => {
+    const onSetStyle = (e: Event) => {
+      agentDispatch({ type: "SET_STYLE", analysis: (e as CustomEvent).detail });
+    };
+    const onSetRules = (e: Event) => {
+      agentDispatch({ type: "SET_RULES", rules: (e as CustomEvent).detail });
+    };
+    window.addEventListener("agent:set-style", onSetStyle);
+    window.addEventListener("agent:set-rules", onSetRules);
+    return () => {
+      window.removeEventListener("agent:set-style", onSetStyle);
+      window.removeEventListener("agent:set-rules", onSetRules);
+    };
+  }, []);
+
+  // Sync code from agent state to local state
+  useEffect(() => {
+    if (agentState.code) setCode(agentState.code);
+  }, [agentState.code]);
+
+  useEffect(() => {
+    if (agentState.videoUrl) setVideoUrl(resolveMediaUrl(agentState.videoUrl, Date.now()));
+  }, [agentState.videoUrl]);
+
+  useEffect(() => {
+    if (agentState.jobId) {
+      setJobId(agentState.jobId);
+      setSelectedProjectId(agentState.jobId);
+      void loadProjects();
+    }
+  }, [agentState.jobId, loadProjects]);
+
+  // Agent mode generate
+  const onAgentGenerate = async () => {
+    if (!prompt.trim()) return;
+    setBusy(true);
+    setVideoUrl(null);
+    agentDispatch({ type: "RESET" });
+
+    await streamAgentGenerate(
+      {
+        prompt,
+        llm: llmConfig.apiKey
+          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model }
+          : null,
+        style_analysis: agentState.styleAnalysis || null,
+        rules: {
+          max_duration: agentState.rules.maxDuration,
+          color_palette: agentState.rules.colorPalette || null,
+          font_size: agentState.rules.fontSize,
+          transitions: agentState.rules.transitions.length > 0 ? agentState.rules.transitions : null,
+          background: agentState.rules.background || null,
+          custom_rules: agentState.rules.customRules || null,
+        },
+      },
+      {
+        onStepStart: (data) => agentDispatch({ type: "STEP_START", step: data.step, message: data.message }),
+        onCodeGenerated: (data) => agentDispatch({ type: "CODE_GENERATED", code: data.code }),
+        onValidationResult: (data) => {
+          agentDispatch({ type: "STEP_END", passed: data.passed, error: data.syntax_error });
+          if (!data.passed) {
+            agentDispatch({ type: "STEP_START", step: "correct", message: `修正中...` });
+          }
+        },
+        onRenderResult: (data) => {
+          agentDispatch({ type: "STEP_END", passed: data.passed, error: data.error });
+          if (data.video_url) {
+            agentDispatch({ type: "RENDER_RESULT", passed: true, videoUrl: data.video_url });
+          }
+        },
+        onComplete: (data) => {
+          agentDispatch({ type: "COMPLETE", code: data.code, videoUrl: data.video_url, jobId: data.job_id });
+          setStatus("动画生成完成。");
+        },
+        onError: (data) => {
+          agentDispatch({ type: "ERROR", message: data.message });
+          setStatus(`错误：${data.message}`);
+        },
+      },
+      token
+    );
+
+    setBusy(false);
+  };
+
+  // Simple mode generate (original)
+  const onSimpleGenerate = async () => {
     setBusy(true);
     setStatus("正在根据描述生成 Manim 代码...");
     setVideoUrl(null);
@@ -117,6 +217,8 @@ export default function App() {
       setBusy(false);
     }
   };
+
+  const onGenerate = agentMode ? onAgentGenerate : onSimpleGenerate;
 
   const onRender = async () => {
     if (!jobId) {
@@ -230,11 +332,20 @@ export default function App() {
     setVideoUrl(null);
     setSelectedProjectId(null);
     setStatus("");
+    agentDispatch({ type: "RESET" });
   };
+
+  const resolvedVision = resolveVisionConfig(llmConfig, visionConfig);
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
-      <Header health={health} onLlmConfigChange={setLlmConfig} />
+      <Header
+        health={health}
+        onLlmConfigChange={setLlmConfig}
+        onVisionChange={setVisionConfig}
+        agentMode={agentMode}
+        onAgentModeChange={setAgentMode}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar toggle for small screens */}
@@ -283,14 +394,28 @@ export default function App() {
             {/* Left: Prompt + Code */}
             <div className="flex flex-col lg:w-1/2 p-4 overflow-auto border-b lg:border-b-0 lg:border-r border-border">
               <div className="mb-4">
-                <PromptPanel
-                  prompt={prompt}
-                  onPromptChange={setPrompt}
-                  onGenerate={onGenerate}
-                  onRender={onRender}
-                  busy={busy}
-                  hasCode={!!code}
-                />
+                {agentMode ? (
+                  <AgentPanel
+                    prompt={prompt}
+                    onPromptChange={setPrompt}
+                    agentState={agentState}
+                    llmConfig={llmConfig}
+                    visionConfig={resolvedVision}
+                    onGenerate={onGenerate}
+                    onRender={onRender}
+                    busy={busy}
+                    hasJob={!!jobId}
+                  />
+                ) : (
+                  <PromptPanel
+                    prompt={prompt}
+                    onPromptChange={setPrompt}
+                    onGenerate={onGenerate}
+                    onRender={onRender}
+                    busy={busy}
+                    hasCode={!!code}
+                  />
+                )}
               </div>
               <div className="flex-1 min-h-[250px]">
                 <CodeEditor

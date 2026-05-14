@@ -15,11 +15,14 @@ import uuid
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from openai import OpenAI
 from pydantic import BaseModel, Field
+
+from agent import analyze_image_style, run_agent_workflow
+from agent.models import AgentGenerateBody, VisionLlmConfig
 
 from supabase_sync import (
     decode_user_id_from_jwt,
@@ -366,3 +369,48 @@ def debug_env():
     result = {v: len(os.environ.get(v, "")) for v in vars_to_check}
     result["cors_origins"] = _allowed_cors_origins()
     return result
+
+
+# ── Agent 工作流端点 ──────────────────────────────────────────────
+
+
+@app.post("/api/agent/generate")
+async def api_agent_generate(body: AgentGenerateBody):
+    import json as _json
+
+    async def event_generator():
+        async for event in run_agent_workflow(
+            prompt=body.prompt,
+            llm_config=body.llm,
+            style_analysis=body.style_analysis,
+            rules=body.rules,
+            max_syntax_retries=body.max_retries,
+            max_render_retries=max(1, body.max_retries - 1),
+        ):
+            event_type = event["event"]
+            event_data = _json.dumps(event["data"], ensure_ascii=False)
+            yield f"event: {event_type}\ndata: {event_data}\n\n"
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/analyze-style")
+async def api_analyze_style(
+    file: UploadFile,
+    vision_llm: str = "{}",
+):
+    import json as _json
+
+    config = VisionLlmConfig.model_validate_json(vision_llm)
+    image_bytes = await file.read()
+    style_text = await analyze_image_style(image_bytes, file.content_type or "image/png", config)
+    return {"style_analysis": style_text}
