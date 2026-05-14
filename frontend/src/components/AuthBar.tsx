@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { LogOut, Mail } from "lucide-react";
+import { LogOut, UserPlus, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/lib/supabase";
@@ -13,11 +13,13 @@ interface AuthBarProps {
 
 export function AuthBar({ session, busy, onStatusChange }: AuthBarProps) {
   const [email, setEmail] = useState("");
-  const [sending, setSending] = useState(false);
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [loading, setLoading] = useState(false);
 
   const supabaseReady = Boolean(supabase);
 
-  const sendMagicLink = async () => {
+  const handleSubmit = async () => {
     if (!supabase) {
       onStatusChange("未配置 Supabase。");
       return;
@@ -27,17 +29,27 @@ export function AuthBar({ session, busy, onStatusChange }: AuthBarProps) {
       onStatusChange("请输入邮箱。");
       return;
     }
-    setSending(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email: em,
-      options: { emailRedirectTo: window.location.origin },
-    });
-    setSending(false);
-    if (error) {
-      onStatusChange(`发送失败：${error.message}`);
+    if (password.length < 6) {
+      onStatusChange("密码至少 6 位。");
       return;
     }
-    onStatusChange("已发送魔法链接，请到邮箱点击完成登录。");
+    setLoading(true);
+    let result;
+    if (mode === "register") {
+      result = await supabase.auth.signUp({ email: em, password });
+    } else {
+      result = await supabase.auth.signInWithPassword({ email: em, password });
+    }
+    setLoading(false);
+    if (result.error) {
+      onStatusChange(`失败：${result.error.message}`);
+      return;
+    }
+    if (mode === "register") {
+      onStatusChange("注册成功，请查收确认邮件（或直接登录）。");
+    } else {
+      onStatusChange("登录成功。");
+    }
   };
 
   const signOut = async () => {
@@ -71,23 +83,42 @@ export function AuthBar({ session, busy, onStatusChange }: AuthBarProps) {
     <div className="p-3 border-t border-border space-y-2">
       <Input
         type="email"
-        placeholder="邮箱登录"
+        placeholder="邮箱"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        disabled={busy || sending}
+        disabled={busy || loading}
         className="h-8 text-xs"
-        onKeyDown={(e) => e.key === "Enter" && sendMagicLink()}
+        onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+      />
+      <Input
+        type="password"
+        placeholder="密码"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        disabled={busy || loading}
+        className="h-8 text-xs"
+        onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
       />
       <Button
         variant="default"
         size="sm"
         className="w-full h-8 text-xs"
-        disabled={busy || sending}
-        onClick={sendMagicLink}
+        disabled={busy || loading}
+        onClick={handleSubmit}
       >
-        <Mail className="h-3.5 w-3.5 mr-1.5" />
-        发送登录链接
+        {mode === "login" ? (
+          <><LogIn className="h-3.5 w-3.5 mr-1.5" />登录</>
+        ) : (
+          <><UserPlus className="h-3.5 w-3.5 mr-1.5" />注册</>
+        )}
       </Button>
+      <button
+        className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
+        onClick={() => setMode(mode === "login" ? "register" : "login")}
+        disabled={loading}
+      >
+        {mode === "login" ? "没有账号？注册" : "已有账号？登录"}
+      </button>
     </div>
   );
 }
