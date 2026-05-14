@@ -33,7 +33,8 @@ const PRESETS: Record<string, Partial<LlmConfig>> = {
   "智谱 GLM-4": { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4" },
   "智谱 GLM-4-Flash": { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
   "月之暗面 Kimi": { baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
-  "硅基流动": { baseUrl: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-72B-Instruct" },
+  "硅基流动 MiMo": { baseUrl: "https://api.siliconflow.cn/v1", model: "XiaoMi/MiMo-7B-RL" },
+  "硅基流动 Qwen": { baseUrl: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-72B-Instruct" },
   "Groq Llama": { baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
 };
 
@@ -82,7 +83,7 @@ export function SettingsDialog({ onConfigChange }: SettingsDialogProps) {
       <DialogTrigger className="inline-flex items-center justify-center h-7 w-7 rounded-md hover:bg-muted transition-colors cursor-pointer border-none bg-transparent">
         <Settings className="h-4 w-4" />
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>LLM API 设置</DialogTitle>
         </DialogHeader>
@@ -91,7 +92,7 @@ export function SettingsDialog({ onConfigChange }: SettingsDialogProps) {
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
               快速预设
             </label>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="grid grid-cols-3 gap-1.5">
               {Object.keys(PRESETS).map((name) => (
                 <Button
                   key={name}
