@@ -225,7 +225,7 @@ export default function App() {
     await submitAndStreamTeacher(
       {
         prompt: agentState.problemText || prompt,
-        image_base64: agentState.imageBase64 || null,
+        image_base64: null,  // Don't re-send image; problem text is already extracted
         content_type: "image/png",
         llm: freshLlm.apiKey
           ? { api_key: freshLlm.apiKey, base_url: freshLlm.baseUrl, model: freshLlm.model, api_format: freshLlm.apiFormat }
