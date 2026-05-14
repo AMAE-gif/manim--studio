@@ -177,6 +177,14 @@ async def extract_math_problem(
     try:
         return _json.loads(text)
     except _json.JSONDecodeError:
+        # Try to extract JSON from the response (LLM may add extra text)
+        import re
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if json_match:
+            try:
+                return _json.loads(json_match.group())
+            except _json.JSONDecodeError:
+                pass
         return {
             "problem_text": raw,
             "expressions": [],
