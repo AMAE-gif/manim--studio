@@ -57,7 +57,12 @@ async def _llm_chat(
             messages=user_messages,
             temperature=temperature,
         )
-        return response.content[0].text
+        # Skip ThinkingBlock, find first TextBlock
+        for block in response.content:
+            if hasattr(block, "text"):
+                return block.text
+        # Fallback: shouldn't happen but handle gracefully
+        return str(response.content[0]) if response.content else ""
     else:
         from openai import AsyncOpenAI
 

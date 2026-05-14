@@ -56,7 +56,11 @@ async def _vision_llm_call(
             ),
             timeout=30.0,
         )
-        return response.content[0].text
+        # Skip ThinkingBlock, find first TextBlock
+        for block in response.content:
+            if hasattr(block, "text"):
+                return block.text
+        return str(response.content[0]) if response.content else ""
     else:
         from openai import AsyncOpenAI
 
