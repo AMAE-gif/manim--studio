@@ -110,6 +110,7 @@ class GenerateBody(BaseModel):
 class GenerateResponse(BaseModel):
     code: str
     job_id: str
+    video_url: str | None = None
 
 
 def _strip_code_fences(text: str) -> str:
@@ -193,16 +194,65 @@ async def api_generate(
     body: GenerateBody,
     user_id: UUID | None = Depends(get_optional_user),
 ):
+    from agent.tools import validate_syntax, check_manim_imports, render_animation
+    from agent.workflow import _llm_chat
+
+    # Step 1: Get code (generate or use pre-generated)
     if body.code:
-        # Pre-generated code from frontend (skip LLM call)
-        code = _ensure_scene(_strip_code_fences(body.code))
+        code = _strip_code_fences(body.code)
+        try:
+            code = _ensure_scene(code)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
     else:
         code = await generate_manim_code(body.prompt, body.llm)
+
     job_id = str(uuid.uuid4())
     job_dir = WORKDIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     script_path = job_dir / "scene.py"
     script_path.write_text(code, encoding="utf-8")
+
+    # Step 2: Validate syntax
+    syntax = validate_syntax(code)
+    imports = check_manim_imports(code)
+    if not syntax["passed"] or not imports["valid"]:
+        error = syntax.get("error") or str(imports.get("checks", {}))
+        raise HTTPException(status_code=422, detail=f"代码语法错误: {error}")
+
+    # Step 3: Render + auto-fix loop
+    video_url = None
+    api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": body.prompt},
+    ]
+
+    for attempt in range(2):  # 1 initial + 1 fix
+        result = await render_animation(code, job_id)
+        if result["passed"]:
+            video_url = result.get("video_url")
+            break
+
+        # Render failed — try auto-fix if we have an API key
+        if attempt == 0 and api_key and api_key != "__direct__":
+            error_msg = result.get("error", "Unknown error")[-2000:]
+            log.warning("Render failed (attempt %d), auto-fixing: %s", attempt + 1, error_msg[:300])
+            messages.append({"role": "assistant", "content": code})
+            messages.append({"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"})
+            try:
+                base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
+                model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+                api_format = (body.llm.api_format if body.llm and body.llm.api_format else "openai")
+                raw = await _llm_chat(messages=messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+                code = _strip_code_fences(raw)
+                code = _ensure_scene(code)
+                script_path.write_text(code, encoding="utf-8")
+            except Exception as e:
+                log.error("Auto-fix LLM call failed: %s", e)
+                break
+        else:
+            break
 
     sb = get_supabase_admin()
     if sb is not None and user_id is not None:
@@ -217,7 +267,7 @@ async def api_generate(
         except Exception as e:
             log.warning("Supabase insert_project 失败（仍返回本地 job）: %s", e)
 
-    return GenerateResponse(code=code, job_id=job_id)
+    return GenerateResponse(code=code, job_id=job_id, video_url=video_url)
 
 
 class RenderBody(BaseModel):

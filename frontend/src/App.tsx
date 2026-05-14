@@ -462,30 +462,41 @@ export default function App() {
       }
       code = code.trim();
 
-      // Step 3: Save to backend for rendering (just storage, no LLM call)
+      // Step 3: Send to backend for validation + render + auto-fix
+      setStatus("正在验证语法并预渲染...");
       const r = await apiFetch(
         "/api/generate",
         {
           method: "POST",
           body: JSON.stringify({
             prompt,
-            llm: { api_key: "__direct__", base_url: "", model: "", api_format: "openai" },
-            code,  // Pass pre-generated code
+            llm: {
+              api_key: llmConfig.apiKey,
+              base_url: llmConfig.baseUrl,
+              model: llmConfig.model,
+              api_format: llmConfig.apiFormat,
+            },
+            code,
           }),
         },
         token
       );
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
-        // If backend fails, still show the code
         setCode(code);
-        setStatus("代码已生成（后端保存失败，可编辑后手动渲染）。");
+        const detail = typeof data.detail === "string" ? data.detail : "生成失败";
+        setStatus(`错误：${detail}`);
         return;
       }
       setCode(data.code ?? code);
       setJobId(data.job_id ?? null);
       setSelectedProjectId(data.job_id ?? null);
-      setStatus("代码已生成。可编辑后点击渲染。");
+      if (data.video_url) {
+        setVideoUrl(resolveMediaUrl(data.video_url, Date.now()));
+        setStatus("代码已生成并通过渲染验证，动画已就绪。");
+      } else {
+        setStatus("代码已生成，但预渲染失败。请检查代码后手动渲染。");
+      }
     } catch (e) {
       setStatus(`生成失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
