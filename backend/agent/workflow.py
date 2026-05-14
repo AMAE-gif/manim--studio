@@ -473,9 +473,59 @@ async def run_teacher_workflow(
         yield {"event": "error", "data": {"message": f"语法错误: {syntax_ok.get('error', 'unknown')}", "recoverable": False}}
         return
 
-    # Save code (user will render manually after reviewing)
+    # Save code
     script_path = job_dir / "scene.py"
     script_path.write_text(code, encoding="utf-8")
+
+    # ── Phase 5: Test render with auto-fix ──
+    max_render_retries = 2
+    for render_attempt in range(max_render_retries + 1):
+        if render_attempt == 0:
+            yield _event("render_test", "正在预渲染检查...")
+        else:
+            yield _event("render_test", f"正在修复渲染错误（第 {render_attempt} 次）...")
+
+        render_result = await render_animation(code, job_id)
+
+        if render_result["passed"]:
+            yield {
+                "event": "render_result",
+                "data": {
+                    "passed": True,
+                    "error": None,
+                    "video_url": render_result.get("video_url"),
+                    "duration": 0,
+                },
+            }
+            break
+
+        # Render failed — ask LLM to fix
+        render_error = render_result.get("error", "Unknown render error")[-2000:]
+        log.warning("Teacher render attempt %d failed: %s", render_attempt + 1, render_error[:500])
+
+        if render_attempt >= max_render_retries:
+            yield {
+                "event": "render_result",
+                "data": {"passed": False, "error": render_error, "video_url": None, "duration": 0},
+            }
+            break
+
+        # Feed error back to LLM
+        gen_messages.append({"role": "assistant", "content": raw_content})
+        gen_messages.append({"role": "user", "content": f"渲染失败，错误信息：\n{render_error}\n\n请修复代码中的问题，只输出完整的修复后 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文（\\text{{中文}} 会失败）\n2. 确保所有变量已定义\n3. 确保使用 manim 社区版 API"})
+
+        yield _event("correct", "正在根据渲染错误修复代码...")
+        try:
+            raw_content = await _llm_chat(
+                messages=gen_messages, model=model, api_key=api_key,
+                base_url=base_url, api_format=api_format, temperature=0.3,
+            )
+            code = extract_code_from_response(raw_content)
+            yield {"event": "code_generated", "data": {"code": code, "duration": 0}}
+            script_path.write_text(code, encoding="utf-8")
+        except Exception as e:
+            yield {"event": "error", "data": {"message": f"修复失败: {e}", "recoverable": False}}
+            return
 
     yield {
         "event": "complete",
