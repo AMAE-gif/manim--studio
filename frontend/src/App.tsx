@@ -135,11 +135,20 @@ export default function App() {
 
   // Teacher mode handlers
   const onTeacherAnalyze = async (file: File) => {
-    console.log("onTeacherAnalyze - resolvedVision:", resolvedVision);
-    console.log("onTeacherAnalyze - llmConfig:", { ...llmConfig, apiKey: llmConfig.apiKey ? "***" + llmConfig.apiKey.slice(-4) : "(empty)" });
-    console.log("onTeacherAnalyze - visionConfig:", visionConfig);
-    if (!resolvedVision.apiKey) {
-      setStatus(`视觉模型 API Key 未配置。当前代码模型 API Key: ${llmConfig.apiKey ? "已配置" : "未配置"}。请在设置中勾选"使用与代码模型相同的 API Key"，或单独填写视觉模型的 API Key。`);
+    // Read config directly from localStorage to avoid state timing issues
+    const freshSettings = loadLlmConfig();
+    const freshProvider = freshSettings.providers.find((p) => p.id === freshSettings.activeProviderId);
+    const freshLlmConfig: LlmConfig = {
+      apiKey: freshProvider?.apiKey || "",
+      baseUrl: freshProvider?.baseUrl || "https://api.openai.com/v1",
+      model: freshSettings.activeModel,
+      apiFormat: (freshProvider?.apiFormat as "openai" | "anthropic") || "openai",
+    };
+    const freshVision = resolveVisionConfig(freshLlmConfig, freshSettings.vision);
+    console.log("onTeacherAnalyze - fresh resolvedVision:", { ...freshVision, apiKey: freshVision.apiKey ? "***" + freshVision.apiKey.slice(-4) : "(empty)" });
+
+    if (!freshVision.apiKey) {
+      setStatus(`视觉模型 API Key 未配置。代码模型 API Key: ${freshLlmConfig.apiKey ? "已配置" : "未配置"}，视觉 useSameAsCode: ${freshSettings.vision.useSameAsCode}。请在设置中配置。`);
       return;
     }
     setBusy(true);
@@ -162,9 +171,9 @@ export default function App() {
       const formData = new FormData();
       formData.append("file", file);
       const visionPayload = {
-        api_key: resolvedVision.apiKey,
-        base_url: resolvedVision.baseUrl || undefined,
-        model: resolvedVision.model || "gpt-4o",
+        api_key: freshVision.apiKey,
+        base_url: freshVision.baseUrl || undefined,
+        model: freshVision.model || "gpt-4o",
       };
       console.log("Vision config sent:", { ...visionPayload, api_key: visionPayload.api_key ? "***" + visionPayload.api_key.slice(-4) : "(empty)" });
       formData.append("vision_llm", JSON.stringify(visionPayload));
@@ -201,18 +210,29 @@ export default function App() {
     setBusy(true);
     setVideoUrl(null);
 
+    // Read fresh config from localStorage
+    const freshSettings = loadLlmConfig();
+    const freshProvider = freshSettings.providers.find((p) => p.id === freshSettings.activeProviderId);
+    const freshLlm: LlmConfig = {
+      apiKey: freshProvider?.apiKey || "",
+      baseUrl: freshProvider?.baseUrl || "https://api.openai.com/v1",
+      model: freshSettings.activeModel,
+      apiFormat: (freshProvider?.apiFormat as "openai" | "anthropic") || "openai",
+    };
+    const freshVision = resolveVisionConfig(freshLlm, freshSettings.vision);
+
     await submitAndStreamTeacher(
       {
         prompt: prompt || agentState.problemText,
         image_base64: agentState.imageBase64 || null,
         content_type: "image/png",
-        llm: llmConfig.apiKey
-          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
+        llm: freshLlm.apiKey
+          ? { api_key: freshLlm.apiKey, base_url: freshLlm.baseUrl, model: freshLlm.model, api_format: freshLlm.apiFormat }
           : null,
         vision_llm: {
-          api_key: resolvedVision.apiKey,
-          base_url: resolvedVision.baseUrl || undefined,
-          model: resolvedVision.model || "gpt-4o",
+          api_key: freshVision.apiKey,
+          base_url: freshVision.baseUrl || undefined,
+          model: freshVision.model || "gpt-4o",
         },
         style_analysis: agentState.styleAnalysis || null,
         rules: {
@@ -264,18 +284,29 @@ export default function App() {
     setBusy(true);
     setVideoUrl(null);
 
+    // Read fresh config from localStorage
+    const freshSettings = loadLlmConfig();
+    const freshProvider = freshSettings.providers.find((p) => p.id === freshSettings.activeProviderId);
+    const freshLlm: LlmConfig = {
+      apiKey: freshProvider?.apiKey || "",
+      baseUrl: freshProvider?.baseUrl || "https://api.openai.com/v1",
+      model: freshSettings.activeModel,
+      apiFormat: (freshProvider?.apiFormat as "openai" | "anthropic") || "openai",
+    };
+    const freshVision = resolveVisionConfig(freshLlm, freshSettings.vision);
+
     await submitAndStreamTeacher(
       {
         session_id: agentState.sessionId,
         refinement: instruction,
         step_index: stepIndex,
-        llm: llmConfig.apiKey
-          ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
+        llm: freshLlm.apiKey
+          ? { api_key: freshLlm.apiKey, base_url: freshLlm.baseUrl, model: freshLlm.model, api_format: freshLlm.apiFormat }
           : null,
         vision_llm: {
-          api_key: resolvedVision.apiKey,
-          base_url: resolvedVision.baseUrl || undefined,
-          model: resolvedVision.model || "gpt-4o",
+          api_key: freshVision.apiKey,
+          base_url: freshVision.baseUrl || undefined,
+          model: freshVision.model || "gpt-4o",
         },
         rules: {
           max_duration: agentState.rules.maxDuration,
