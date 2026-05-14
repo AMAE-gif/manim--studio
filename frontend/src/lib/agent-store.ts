@@ -67,6 +67,7 @@ export interface AgentState {
   solutionSummary: string;
   sessionId: string | null;
   refinementHistory: Array<{ instruction: string; stepIndex: number | null; timestamp: number }>;
+  imageBase64: string | null;
 }
 
 export interface SolutionStep {
@@ -93,6 +94,7 @@ export type AgentAction =
   | { type: "SOLUTION_READY"; steps: SolutionStep[]; summary: string }
   | { type: "SOLUTION_REFINED"; steps: SolutionStep[]; instruction: string; stepIndex: number | null }
   | { type: "SET_SESSION_ID"; sessionId: string }
+  | { type: "SET_IMAGE"; imageBase64: string }
   | { type: "RESET_TEACHER" }
   | { type: "RESET" };
 
@@ -123,6 +125,7 @@ export const initialState: AgentState = {
   solutionSummary: "",
   sessionId: null,
   refinementHistory: [],
+  imageBase64: null,
 };
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -240,6 +243,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
 
     case "SET_SESSION_ID":
       return { ...state, sessionId: action.sessionId };
+
+    case "SET_IMAGE":
+      return { ...state, imageBase64: action.imageBase64 };
 
     case "RESET_TEACHER":
       return {

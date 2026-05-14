@@ -137,6 +137,20 @@ export default function App() {
     setBusy(true);
     agentDispatch({ type: "RESET" });
     try {
+      // Read file as base64 and save to state
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          // Remove data:image/...;base64, prefix
+          const base64 = result.split(",")[1] || result;
+          resolve(base64);
+        };
+        reader.readAsDataURL(file);
+      });
+      const imageBase64 = await base64Promise;
+      agentDispatch({ type: "SET_IMAGE", imageBase64 });
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("vision_llm", JSON.stringify({
@@ -172,6 +186,8 @@ export default function App() {
     await submitAndStreamTeacher(
       {
         prompt: prompt || agentState.problemText,
+        image_base64: agentState.imageBase64 || null,
+        content_type: "image/png",
         llm: llmConfig.apiKey
           ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model }
           : null,
