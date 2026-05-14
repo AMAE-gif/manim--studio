@@ -357,3 +357,10 @@ def health():
         "uptime_seconds": int(time.time() - _start_time),
         **checks,
     }
+
+
+@app.get("/api/debug-env")
+def debug_env():
+    """Temporary: check which env vars exist (length only, no secrets)."""
+    vars_to_check = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_JWT_SECRET"]
+    return {v: len(os.environ.get(v, "")) for v in vars_to_check}
