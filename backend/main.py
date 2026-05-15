@@ -367,7 +367,7 @@ async def api_render(
                 break
 
             error_msg = result.get("error", "Unknown error")
-            log.warning("[attempt %d/3] 渲染失败: %s", attempt + 1, error_msg[:300])
+            log.warning("[attempt %d/3] 渲染失败: %s", attempt + 1, error_msg[:500])
 
             # No LLM key — can't auto-fix
             if not api_key or api_key == "__direct__":
@@ -377,17 +377,24 @@ async def api_render(
             # Call LLM to fix the code
             from agent.tools import validate_syntax
             log.info("[attempt %d/3] 调用 LLM 修复代码 (model=%s, format=%s)...", attempt + 1, model, api_format)
+
+            # Extract key error lines for the prompt
+            err_lines = error_msg.strip().split("\n")
+            key_err = "\n".join(err_lines[-15:]) if len(err_lines) > 15 else error_msg
+
             fix_prompt = (
-                f"以下 Manim 代码渲染失败，请修复并输出完整 Python 代码。\n\n"
-                f"=== 错误信息 ===\n{error_msg[-3000:]}\n\n"
-                f"=== 原代码 ===\n{code}\n\n"
+                f"以下 Manim 代码渲染失败（第 {attempt+1} 次尝试），请分析错误并输出修复后的完整 Python 代码。\n\n"
+                f"=== 渲染错误 ===\n{key_err[-3000:]}\n\n"
+                f"=== 当前代码 ===\n{code}\n\n"
                 f"修复要求：\n"
                 f"1. 只输出完整 Python 代码，不要解释\n"
                 f"2. 第一行必须是 from manim import *\n"
                 f"3. 必须定义 class GeneratedScene(Scene):\n"
-                f"4. 中文必须用 Text('中文', font='Noto Sans CJK SC')，绝不能放进 MathTex\n"
-                f"5. MathTex 只能包含纯 LaTeX（无中文、无 Unicode）\n"
-                f"6. 所有变量先定义再使用"
+                f"4. 中文必须用 Text('中文', font='Noto Sans CJK SC')，绝不能放进 MathTex/Tex\n"
+                f"5. MathTex/Tex 只能包含纯 LaTeX（无中文、无 Unicode）\n"
+                f"6. 如果是 LaTeX 编译错误，检查是否缺少包、语法错误、或使用了不支持的命令\n"
+                f"7. 所有变量先定义再使用\n"
+                f"8. 如果某个 LaTeX 表达式反复失败，考虑用 Text 或 MathTex 的简单写法替代"
             )
             fix_msgs = [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -397,21 +404,23 @@ async def api_render(
                 raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
                 if not raw or not raw.strip():
                     log.error("[attempt %d/3] LLM 返回空内容!", attempt + 1)
-                    break
+                    continue  # Try again instead of breaking
                 new_code = _strip_code_fences(raw)
                 # Validate syntax before rendering
                 syntax = validate_syntax(new_code)
                 if not syntax["passed"]:
                     log.warning("[attempt %d/3] LLM 修复的代码有语法错误: %s", attempt + 1, syntax["error"])
-                    # Don't use this code, break
-                    break
+                    # Feed syntax error back to LLM in next iteration
+                    code = new_code  # Use the broken code so LLM can see it
+                    script_path.write_text(code, encoding="utf-8")
+                    continue  # Try again instead of breaking
                 new_code = _ensure_scene(new_code)
                 code = new_code
                 script_path.write_text(code, encoding="utf-8")
                 log.info("[attempt %d/3] LLM 修复完成，新代码 %d 字符", attempt + 1, len(code))
             except Exception as e:
                 log.error("[attempt %d/3] LLM 修复失败: %s", attempt + 1, e)
-                break
+                continue  # Try again instead of breaking
 
         log.info("=== api_render END job_id=%s, passed=%s ===", body.job_id, result and result.get("passed"))
 
