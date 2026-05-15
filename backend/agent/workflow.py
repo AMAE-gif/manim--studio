@@ -491,8 +491,12 @@ async def run_teacher_workflow(
 
     # ── Phase 5: Render test with auto-fix ──
     for render_attempt in range(2):  # max 2 attempts (1 initial + 1 fix)
-        yield _event("render_test", "正在预渲染验证..." if render_attempt == 0 else "正在修复渲染错误...")
-        render_result = await render_animation(code, job_id)
+        yield _event("render_test", "正在预渲染验证..." if render_attempt == 0 else "正在修复渲染错误（调用 LLM 重写代码）...")
+        try:
+            render_result = await render_animation(code, job_id)
+        except Exception as e:
+            log.error("render_animation exception: %s", e)
+            render_result = {"passed": False, "error": f"渲染进程异常: {e}", "video_url": None}
 
         yield {
             "event": "render_result",
@@ -505,7 +509,6 @@ async def run_teacher_workflow(
         }
 
         if render_result["passed"]:
-            # Render succeeded — return with video
             yield {
                 "event": "complete",
                 "data": {
@@ -518,9 +521,10 @@ async def run_teacher_workflow(
             }
             return
 
-        # Render failed — try to auto-fix
+        # Render failed — try to auto-fix with LLM
         if render_attempt == 0:
             render_error = render_result.get("error", "Unknown error")[-2000:]
+            yield _event("fix", "正在调用 LLM 修复渲染错误...")
             gen_messages.append({"role": "assistant", "content": raw_content})
             gen_messages.append({"role": "user", "content": f"渲染失败，错误信息：\n{render_error}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"})
             try:
@@ -532,13 +536,13 @@ async def run_teacher_workflow(
                 yield {"event": "code_generated", "data": {"code": code, "duration": 0}}
                 script_path.write_text(code, encoding="utf-8")
 
-                # Re-validate syntax after fix
                 syntax_ok = validate_syntax(code)
                 if not syntax_ok["passed"]:
                     yield {"event": "error", "data": {"message": f"修复后语法错误: {syntax_ok.get('error')}", "recoverable": False}}
                     return
             except Exception as e:
-                yield {"event": "error", "data": {"message": f"修复失败: {e}", "recoverable": False}}
+                log.error("Render auto-fix LLM call failed: %s", e)
+                yield {"event": "error", "data": {"message": f"LLM 修复失败: {e}", "recoverable": False}}
                 return
 
     # All render attempts failed — still return code so user can edit

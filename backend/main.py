@@ -321,82 +321,98 @@ async def api_render(
     body: RenderBody,
     user_id: UUID | None = Depends(get_optional_user),
 ):
-    from agent.tools import render_animation
-    from agent.workflow import _llm_chat
+    import traceback as _tb
 
-    job_dir = WORKDIR / body.job_id
-    if not job_dir.is_dir():
-        raise HTTPException(status_code=404, detail="job_id 不存在，请先生成")
+    try:
+        from agent.tools import render_animation
+        from agent.workflow import _llm_chat
 
-    script_path = job_dir / "scene.py"
-    if body.code is not None:
-        try:
-            script_path.write_text(_ensure_scene(_strip_code_fences(body.code)), encoding="utf-8")
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e)) from e
+        job_dir = WORKDIR / body.job_id
+        if not job_dir.is_dir():
+            raise HTTPException(status_code=404, detail="job_id 不存在，请先生成")
 
-    code = script_path.read_text(encoding="utf-8")
-
-    # Get LLM config for auto-fix
-    api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
-    base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
-    model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-    api_format = (body.llm.api_format if body.llm and body.llm.api_format else "openai")
-
-    sb = get_supabase_admin()
-    if sb is not None and user_id is not None:
-        try:
-            update_project_code(sb, body.job_id, code)
-        except Exception as e:
-            log.warning("Supabase update_project_code 失败: %s", e)
-
-    # Render + auto-fix loop
-    video_url = None
-    last_error = None
-    for attempt in range(3):  # max 3 attempts
-        result = await render_animation(code, body.job_id)
-        if result["passed"]:
-            video_url = result.get("video_url")
-            break
-
-        # Render failed — try auto-fix
-        error_msg = result.get("error", "Unknown error")[-2000:]
-        last_error = error_msg[-500:]
-        log.warning("Render failed (attempt %d), auto-fixing: %s", attempt + 1, error_msg[:300])
-        if api_key and api_key != "__direct__":
-            fix_msgs = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "修复以下 Manim 代码的渲染错误"},
-                {"role": "assistant", "content": code},
-                {"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文（用 Text()）\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"},
-            ]
+        script_path = job_dir / "scene.py"
+        if body.code is not None:
             try:
-                raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
-                code = _strip_code_fences(raw)
-                code = _ensure_scene(code)
-                script_path.write_text(code, encoding="utf-8")
+                script_path.write_text(_ensure_scene(_strip_code_fences(body.code)), encoding="utf-8")
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
+
+        code = script_path.read_text(encoding="utf-8")
+
+        # Get LLM config for auto-fix
+        api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
+        base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
+        model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        api_format = (body.llm.api_format if body.llm and body.llm.api_format else "openai")
+
+        log.info("api_render - job_id=%s, has_code=%s, has_llm_key=%s, api_format=%s",
+                 body.job_id, body.code is not None, bool(api_key), api_format)
+
+        sb = get_supabase_admin()
+        if sb is not None and user_id is not None:
+            try:
+                update_project_code(sb, body.job_id, code)
             except Exception as e:
-                log.error("Auto-fix LLM call failed: %s", e)
+                log.warning("Supabase update_project_code 失败: %s", e)
+
+        # Render + auto-fix loop
+        video_url = None
+        last_error = None
+        for attempt in range(3):  # max 3 attempts
+            log.info("api_render attempt %d/%d", attempt + 1, 3)
+            result = await render_animation(code, body.job_id)
+            if result["passed"]:
+                video_url = result.get("video_url")
+                log.info("api_render attempt %d passed, video_url=%s", attempt + 1, video_url)
                 break
-        else:
-            break
 
-    if not video_url:
-        # All render attempts failed
-        raise HTTPException(status_code=400, detail=f"Manim 渲染失败（已尝试自动修复）:\n{last_error or '未知错误'}")
+            # Render failed — try auto-fix
+            error_msg = result.get("error", "Unknown error")[-2000:]
+            last_error = error_msg[-500:]
+            log.warning("Render failed (attempt %d), error: %s", attempt + 1, error_msg[:300])
+            if api_key and api_key != "__direct__":
+                log.info("Calling LLM auto-fix (attempt %d)...", attempt + 1)
+                fix_msgs = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": "修复以下 Manim 代码的渲染错误"},
+                    {"role": "assistant", "content": code},
+                    {"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文（用 Text()）\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"},
+                ]
+                try:
+                    raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+                    code = _strip_code_fences(raw)
+                    code = _ensure_scene(code)
+                    script_path.write_text(code, encoding="utf-8")
+                    log.info("LLM auto-fix generated new code (%d chars)", len(code))
+                except Exception as e:
+                    log.error("Auto-fix LLM call failed: %s\n%s", e, _tb.format_exc())
+                    break
+            else:
+                log.info("No API key for auto-fix, stopping")
+                break
 
-    video = find_manim_video(job_dir)
-    final_url = video_url
-    if sb is not None and user_id is not None and video:
-        storage_path = f"{user_id}/{body.job_id}.mp4"
-        try:
-            upload_render_mp4(sb, video, storage_path)
-            update_project_rendered(sb, body.job_id, storage_path)
-            final_url = public_object_url(storage_path)
-        except Exception as e:
-            log.warning("Supabase 上传/更新失败，回退为本地 URL: %s", e)
+        if not video_url:
+            raise HTTPException(status_code=400, detail=f"Manim 渲染失败（已尝试自动修复）:\n{last_error or '未知错误'}")
 
-    return {"ok": True, "video_url": final_url}
+        video = find_manim_video(job_dir)
+        final_url = video_url
+        if sb is not None and user_id is not None and video:
+            storage_path = f"{user_id}/{body.job_id}.mp4"
+            try:
+                upload_render_mp4(sb, video, storage_path)
+                update_project_rendered(sb, body.job_id, storage_path)
+                final_url = public_object_url(storage_path)
+            except Exception as e:
+                log.warning("Supabase 上传/更新失败，回退为本地 URL: %s", e)
+
+        return {"ok": True, "video_url": final_url}
+
+    except HTTPException:
+        raise  # Let FastAPI handle HTTP exceptions normally
+    except Exception as e:
+        log.error("api_render unhandled exception: %s\n%s", e, _tb.format_exc())
+        raise HTTPException(status_code=500, detail=f"渲染服务内部错误: {e}") from e
 
 
 @app.get("/api/video/{job_id}")

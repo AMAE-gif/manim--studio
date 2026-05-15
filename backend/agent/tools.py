@@ -105,6 +105,11 @@ async def render_animation(code: str, job_id: str) -> dict:
 
     except asyncio.TimeoutError:
         return {"passed": False, "error": "Render timed out (120s)", "video_url": None}
+    except FileNotFoundError:
+        return {"passed": False, "error": "manim 命令未找到，请确认已安装 manim", "video_url": None}
+    except Exception as e:
+        log.error("render_animation unexpected error: %s", e)
+        return {"passed": False, "error": f"渲染异常: {e}", "video_url": None}
 
 
 async def execute_tool(tool_call) -> dict:
