@@ -15,9 +15,10 @@ import uuid
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
@@ -323,12 +324,15 @@ async def api_render(
 ):
     import traceback as _tb
 
+    log.info("=== api_render CALLED job_id=%s ===", body.job_id)
+
     try:
         from agent.tools import render_animation
         from agent.workflow import _llm_chat
 
         job_dir = WORKDIR / body.job_id
         if not job_dir.is_dir():
+            log.error("api_render: job_dir not found: %s", job_dir)
             raise HTTPException(status_code=404, detail="job_id 不存在，请先生成代码")
 
         script_path = job_dir / "scene.py"
@@ -884,3 +888,18 @@ async def submit_teacher_job(
 
     _asyncio.create_task(_run())
     return job_id, pending
+
+
+# ── Serve frontend static files (SPA) ──
+_frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_frontend_dist / "assets")), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        """Serve frontend SPA — all non-API routes return index.html."""
+        file_path = _frontend_dist / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(_frontend_dist / "index.html"))
+
