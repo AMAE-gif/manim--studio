@@ -401,7 +401,8 @@ async def api_render(
                 {"role": "user", "content": fix_prompt},
             ]
             try:
-                raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+                raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3, max_tokens=16384)
+                log.info("[attempt %d/3] LLM fix response: %d chars, starts with: %s", attempt + 1, len(raw or ""), repr((raw or "")[:100]))
                 if not raw or not raw.strip():
                     log.error("[attempt %d/3] LLM 返回空内容!", attempt + 1)
                     continue  # Try again instead of breaking

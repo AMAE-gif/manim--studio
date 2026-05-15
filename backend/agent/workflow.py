@@ -57,14 +57,23 @@ async def _llm_chat(
             messages=user_messages,
             temperature=temperature,
         )
-        # Find TextBlock, skip ThinkingBlock
+        # Find TextBlock, skip ThinkingBlock — log thinking usage
         text_parts = []
+        thinking_chars = 0
         for block in response.content:
             block_text = getattr(block, "text", None)
-            if block_text is not None:
+            block_type = getattr(block, "type", "unknown")
+            if block_type == "thinking":
+                thinking_chars += len(block_text or "")
+            elif block_text is not None:
                 text_parts.append(block_text)
+        if thinking_chars > 0:
+            log.info("Anthropic thinking block: %d chars, text blocks: %d", thinking_chars, sum(len(p) for p in text_parts))
         if text_parts:
             return "\n".join(text_parts)
+        # Check if response was truncated
+        if response.stop_reason == "max_tokens":
+            log.warning("Anthropic response truncated (max_tokens=%d). Thinking used %d chars.", max_tokens, thinking_chars)
         # No text found — log and raise
         block_types = [getattr(block, "type", type(block).__name__) for block in response.content]
         log.error("Anthropic response has no TextBlock. Block types: %s", block_types)
