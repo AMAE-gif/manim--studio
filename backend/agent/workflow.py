@@ -225,16 +225,32 @@ def _save_teacher_session(session_id: str, data: dict) -> None:
 
 def _parse_json_response(raw: str) -> dict | None:
     import json as _json
+    import re as _re
     text = raw.strip()
+
+    # Strip markdown code fences
     if text.startswith("```"):
         text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text[:-3]
     text = text.strip()
+
+    # Try direct parse first
     try:
         return _json.loads(text)
     except _json.JSONDecodeError:
-        return None
+        pass
+
+    # Try to extract JSON object from surrounding text
+    match = _re.search(r"\{[\s\S]*\}", text)
+    if match:
+        try:
+            return _json.loads(match.group())
+        except _json.JSONDecodeError:
+            pass
+
+    log.warning("_parse_json_response failed. Raw text (first 500 chars): %s", raw[:500])
+    return None
 
 
 async def run_teacher_workflow(
@@ -349,7 +365,8 @@ async def run_teacher_workflow(
         ]
 
         try:
-            raw = await _llm_chat(messages=messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+            raw = await _llm_chat(messages=messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3, max_tokens=8192)
+            log.info("REFINE raw response (first 500): %s", raw[:500])
             solution_data = _parse_json_response(raw)
         except Exception as e:
             err_msg = str(e)
@@ -359,7 +376,8 @@ async def run_teacher_workflow(
             return
 
         if not solution_data:
-            yield {"event": "error", "data": {"message": "修正结果解析失败。", "recoverable": False}}
+            log.error("REFINE JSON parse failed. Raw (first 800): %s", raw[:800])
+            yield {"event": "error", "data": {"message": f"修正结果解析失败。LLM 返回内容（前200字）：{raw[:200]}", "recoverable": False}}
             return
 
         yield {
@@ -384,7 +402,8 @@ async def run_teacher_workflow(
         ]
 
         try:
-            raw = await _llm_chat(messages=messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+            raw = await _llm_chat(messages=messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3, max_tokens=8192)
+            log.info("SOLVE raw response (first 500): %s", raw[:500])
             solution_data = _parse_json_response(raw)
         except Exception as e:
             err_msg = str(e)
@@ -394,7 +413,8 @@ async def run_teacher_workflow(
             return
 
         if not solution_data:
-            yield {"event": "error", "data": {"message": "解题结果解析失败。", "recoverable": False}}
+            log.error("SOLVE JSON parse failed. Raw (first 800): %s", raw[:800])
+            yield {"event": "error", "data": {"message": f"解题结果解析失败。LLM 返回内容（前200字）：{raw[:200]}", "recoverable": False}}
             return
 
         yield {
