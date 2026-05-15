@@ -352,17 +352,23 @@ async def api_render(
             except Exception as e:
                 log.warning("Supabase update_project_code 失败: %s", e)
 
-        # ── Step 1: Render ──
-        log.info("api_render job_id=%s", body.job_id)
-        result = await render_animation(code, body.job_id)
+        # ── Render + auto-fix loop (max 3 attempts) ──
+        log.info("api_render job_id=%s, has_llm=%s", body.job_id, bool(api_key))
+        result = None
+        for attempt in range(3):
+            result = await render_animation(code, body.job_id)
+            if result["passed"]:
+                break
 
-        # ── Step 2: If failed and LLM key available, auto-fix once ──
-        if not result["passed"] and api_key and api_key != "__direct__":
+            # Failed — try LLM auto-fix
+            if not api_key or api_key == "__direct__":
+                break
+
             error_msg = result.get("error", "Unknown error")[-2000:]
-            log.warning("Render failed, trying LLM auto-fix: %s", error_msg[:200])
+            log.warning("Render failed (attempt %d/3), calling LLM fix: %s", attempt + 1, error_msg[:200])
             fix_msgs = [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "修复以下 Manim 代码的渲染错误"},
+                {"role": "user", "content": "修复以下 Manim 代码的渲染错误，只输出完整 Python 代码。"},
                 {"role": "assistant", "content": code},
                 {"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。"},
             ]
@@ -371,13 +377,14 @@ async def api_render(
                 code = _strip_code_fences(raw)
                 code = _ensure_scene(code)
                 script_path.write_text(code, encoding="utf-8")
-                result = await render_animation(code, body.job_id)
+                log.info("LLM auto-fix attempt %d: new code (%d chars)", attempt + 1, len(code))
             except Exception as e:
-                log.error("Auto-fix failed: %s", e)
+                log.error("LLM auto-fix failed: %s", e)
+                break
 
-        if not result["passed"]:
-            error_msg = result.get("error", "未知错误")
-            raise HTTPException(status_code=400, detail=f"渲染失败:\n{error_msg[-500:]}")
+        if not result or not result["passed"]:
+            error_msg = (result.get("error", "未知错误") if result else "未知错误")[-500:]
+            raise HTTPException(status_code=400, detail=f"渲染失败（已尝试 {attempt + 1} 次）:\n{error_msg}")
 
         video_url = result.get("video_url")
         video = find_manim_video(job_dir)
