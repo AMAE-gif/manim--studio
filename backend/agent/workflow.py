@@ -225,10 +225,16 @@ def _save_teacher_session(session_id: str, data: dict) -> None:
 
 
 def _fix_json_escapes(text: str) -> str:
-    """Fix unescaped backslashes in JSON string values (common with LaTeX)."""
-    # Escape backslashes that are NOT already valid JSON escapes
-    # Valid JSON escapes: \\ \" \/ \b \f \n \r \t \uXXXX
-    return re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+    """Fix unescaped backslashes in JSON string values (common with LaTeX).
+    Strategy: protect \\ and \", then double ALL remaining single backslashes."""
+    PH_BS = "\x00\x01"   # placeholder for \\
+    PH_QUOT = "\x00\x02"  # placeholder for \"
+    text = text.replace("\\\\", PH_BS)
+    text = text.replace('\\"', PH_QUOT)
+    text = text.replace("\\", "\\\\")
+    text = text.replace(PH_BS, "\\\\")
+    text = text.replace(PH_QUOT, '\\"')
+    return text
 
 
 def _parse_json_response(raw: str) -> dict | None:
