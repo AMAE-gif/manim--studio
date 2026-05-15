@@ -38,7 +38,6 @@ async def _llm_chat(
         from anthropic import AsyncAnthropic
 
         client = AsyncAnthropic(api_key=api_key, base_url=base_url or None)
-        log.info("Anthropic client base_url: %s, will call: %s/v1/messages", client.base_url, client.base_url)
         # Anthropic: system prompt is a top-level param, not in messages
         system_content = ""
         user_messages = []
@@ -57,12 +56,18 @@ async def _llm_chat(
             messages=user_messages,
             temperature=temperature,
         )
-        # Skip ThinkingBlock, find first TextBlock
+        # Find TextBlock, skip ThinkingBlock
+        text_parts = []
         for block in response.content:
-            if hasattr(block, "text"):
-                return block.text
-        # Fallback: shouldn't happen but handle gracefully
-        return str(response.content[0]) if response.content else ""
+            block_text = getattr(block, "text", None)
+            if block_text is not None:
+                text_parts.append(block_text)
+        if text_parts:
+            return "\n".join(text_parts)
+        # No text found — log and raise
+        block_types = [getattr(block, "type", type(block).__name__) for block in response.content]
+        log.error("Anthropic response has no TextBlock. Block types: %s", block_types)
+        raise ValueError(f"LLM 返回无文本内容（block types: {block_types}）")
     else:
         from openai import AsyncOpenAI
 

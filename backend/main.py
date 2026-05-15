@@ -371,10 +371,23 @@ async def api_render(
                 break
 
             # Call LLM to fix the code
+            from agent.tools import validate_syntax
             log.info("[attempt %d/3] 调用 LLM 修复代码 (model=%s, format=%s)...", attempt + 1, model, api_format)
+            fix_prompt = (
+                f"以下 Manim 代码渲染失败，请修复并输出完整 Python 代码。\n\n"
+                f"=== 错误信息 ===\n{error_msg[-3000:]}\n\n"
+                f"=== 原代码 ===\n{code}\n\n"
+                f"修复要求：\n"
+                f"1. 只输出完整 Python 代码，不要解释\n"
+                f"2. 第一行必须是 from manim import *\n"
+                f"3. 必须定义 class GeneratedScene(Scene):\n"
+                f"4. 中文必须用 Text('中文', font='Noto Sans CJK SC')，绝不能放进 MathTex\n"
+                f"5. MathTex 只能包含纯 LaTeX（无中文、无 Unicode）\n"
+                f"6. 所有变量先定义再使用"
+            )
             fix_msgs = [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"以下是 Manim 代码，运行时报错，请修复后只输出完整 Python 代码。\n\n错误信息：\n{error_msg[-3000:]}\n\n原代码：\n{code}"},
+                {"role": "user", "content": fix_prompt},
             ]
             try:
                 raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
@@ -382,6 +395,12 @@ async def api_render(
                     log.error("[attempt %d/3] LLM 返回空内容!", attempt + 1)
                     break
                 new_code = _strip_code_fences(raw)
+                # Validate syntax before rendering
+                syntax = validate_syntax(new_code)
+                if not syntax["passed"]:
+                    log.warning("[attempt %d/3] LLM 修复的代码有语法错误: %s", attempt + 1, syntax["error"])
+                    # Don't use this code, break
+                    break
                 new_code = _ensure_scene(new_code)
                 code = new_code
                 script_path.write_text(code, encoding="utf-8")

@@ -85,6 +85,7 @@ async def render_animation(code: str, job_id: str) -> dict:
     script_path = job_dir / "scene.py"
     script_path.write_text(code, encoding="utf-8")
 
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "manim", "render", "-ql", str(script_path), SCENE_CLASS,
@@ -104,11 +105,24 @@ async def render_animation(code: str, job_id: str) -> dict:
         return {"passed": False, "error": "No output video found", "video_url": None}
 
     except asyncio.TimeoutError:
-        return {"passed": False, "error": "Render timed out (120s)", "video_url": None}
+        # Kill the subprocess on timeout
+        if proc:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+        return {"passed": False, "error": "Render timed out (120s) — manim 进程已终止", "video_url": None}
     except FileNotFoundError:
         return {"passed": False, "error": "manim 命令未找到，请确认已安装 manim", "video_url": None}
     except Exception as e:
         log.error("render_animation unexpected error: %s", e)
+        if proc:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
         return {"passed": False, "error": f"渲染异常: {e}", "video_url": None}
 
 

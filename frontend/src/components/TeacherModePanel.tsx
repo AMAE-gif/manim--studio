@@ -233,7 +233,7 @@ export function TeacherModePanel({
           <>
             <Button
               onClick={handleRefine}
-              disabled={busy || !refinement.trim()}
+              disabled={busy || !refinement.trim() || !agentState.sessionId}
               variant="outline"
               className="h-10 px-5"
             >

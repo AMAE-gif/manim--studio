@@ -245,6 +245,7 @@ export default function App() {
           api_key: freshVision.apiKey,
           base_url: freshVision.baseUrl || undefined,
           model: freshVision.model || "gpt-4o",
+          api_format: freshVision.apiFormat || "openai",
         },
         style_analysis: agentState.styleAnalysis || null,
         rules: {
@@ -325,6 +326,7 @@ export default function App() {
           api_key: freshVision.apiKey,
           base_url: freshVision.baseUrl || undefined,
           model: freshVision.model || "gpt-4o",
+          api_format: freshVision.apiFormat || "openai",
         },
         rules: {
           max_duration: agentState.rules.maxDuration,
