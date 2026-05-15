@@ -322,135 +322,128 @@ async def api_render(
     body: RenderBody,
     user_id: UUID | None = Depends(get_optional_user),
 ):
-    import traceback as _tb
+    """Render with auto-fix — returns SSE stream so the connection never times out."""
+    import json as _json
 
-    log.info("=== api_render CALLED job_id=%s ===", body.job_id)
+    def _sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
 
-    try:
+    async def _stream():
         from agent.tools import render_animation
         from agent.workflow import _llm_chat
 
-        job_dir = WORKDIR / body.job_id
-        if not job_dir.is_dir():
-            log.error("api_render: job_dir not found: %s", job_dir)
-            raise HTTPException(status_code=404, detail="job_id 不存在，请先生成代码")
+        log.info("=== api_render CALLED job_id=%s ===", body.job_id)
 
-        script_path = job_dir / "scene.py"
-        if body.code is not None:
-            try:
-                script_path.write_text(_ensure_scene(_strip_code_fences(body.code)), encoding="utf-8")
-            except ValueError as e:
-                raise HTTPException(status_code=422, detail=str(e)) from e
+        try:
+            job_dir = WORKDIR / body.job_id
+            if not job_dir.is_dir():
+                yield _sse("error", {"message": "job_id 不存在，请先生成代码"})
+                return
 
-        code = script_path.read_text(encoding="utf-8")
+            script_path = job_dir / "scene.py"
+            if body.code is not None:
+                try:
+                    script_path.write_text(_ensure_scene(_strip_code_fences(body.code)), encoding="utf-8")
+                except ValueError as e:
+                    yield _sse("error", {"message": str(e)})
+                    return
 
-        api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
-        base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
-        model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-        api_format = (body.llm.api_format if body.llm and body.llm.api_format else "openai")
+            code = script_path.read_text(encoding="utf-8")
 
-        sb = get_supabase_admin()
-        if sb is not None and user_id is not None:
-            try:
-                update_project_code(sb, body.job_id, code)
-            except Exception as e:
-                log.warning("Supabase update_project_code 失败: %s", e)
+            api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
+            base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
+            model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+            api_format = (body.llm.api_format if body.llm and body.llm.api_format else "openai")
 
-        # ── Render + auto-fix loop (max 3 attempts) ──
-        log.info("=== api_render START job_id=%s, has_llm=%s ===", body.job_id, bool(api_key))
-        result = None
-        for attempt in range(3):
-            log.info("[attempt %d/3] 渲染中...", attempt + 1)
-            result = await render_animation(code, body.job_id)
-            if result["passed"]:
-                log.info("[attempt %d/3] 渲染成功!", attempt + 1)
-                break
+            sb = get_supabase_admin()
+            if sb is not None and user_id is not None:
+                try:
+                    update_project_code(sb, body.job_id, code)
+                except Exception as e:
+                    log.warning("Supabase update_project_code 失败: %s", e)
 
-            error_msg = result.get("error", "Unknown error")
-            log.warning("[attempt %d/3] 渲染失败: %s", attempt + 1, error_msg[:500])
+            result = None
+            for attempt in range(3):
+                yield _sse("step_start", {"step": "render", "message": f"渲染中（第 {attempt+1} 次）..."})
+                result = await render_animation(code, body.job_id)
+                if result["passed"]:
+                    yield _sse("step_end", {"step": "render", "passed": True})
+                    break
 
-            # No LLM key — can't auto-fix
-            if not api_key or api_key == "__direct__":
-                log.warning("[attempt %d/3] 无 LLM API Key，跳过自动修复", attempt + 1)
-                break
+                error_msg = result.get("error", "Unknown error")
+                log.warning("[attempt %d/3] 渲染失败: %s", attempt + 1, error_msg[:500])
+                yield _sse("step_end", {"step": "render", "passed": False, "error": error_msg[-500:]})
 
-            # Call LLM to fix the code
-            from agent.tools import validate_syntax
-            log.info("[attempt %d/3] 调用 LLM 修复代码 (model=%s, format=%s)...", attempt + 1, model, api_format)
+                if not api_key or api_key == "__direct__":
+                    break
 
-            # Extract key error lines for the prompt
-            err_lines = error_msg.strip().split("\n")
-            key_err = "\n".join(err_lines[-15:]) if len(err_lines) > 15 else error_msg
+                # Auto-fix with LLM
+                from agent.tools import validate_syntax
+                yield _sse("step_start", {"step": "fix", "message": f"LLM 修复中（第 {attempt+1} 次）..."})
 
-            fix_prompt = (
-                f"以下 Manim 代码渲染失败（第 {attempt+1} 次尝试），请分析错误并输出修复后的完整 Python 代码。\n\n"
-                f"=== 渲染错误 ===\n{key_err[-3000:]}\n\n"
-                f"=== 当前代码 ===\n{code}\n\n"
-                f"修复要求：\n"
-                f"1. 只输出完整 Python 代码，不要解释\n"
-                f"2. 第一行必须是 from manim import *\n"
-                f"3. 必须定义 class GeneratedScene(Scene):\n"
-                f"4. 中文必须用 Text('中文', font='Noto Sans CJK SC')，绝不能放进 MathTex/Tex\n"
-                f"5. MathTex/Tex 只能包含纯 LaTeX（无中文、无 Unicode）\n"
-                f"6. 如果是 LaTeX 编译错误，检查是否缺少包、语法错误、或使用了不支持的命令\n"
-                f"7. 所有变量先定义再使用\n"
-                f"8. 如果某个 LaTeX 表达式反复失败，考虑用 Text 或 MathTex 的简单写法替代"
-            )
-            fix_msgs = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": fix_prompt},
-            ]
-            try:
-                raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3, max_tokens=16384)
-                log.info("[attempt %d/3] LLM fix response: %d chars, starts with: %s", attempt + 1, len(raw or ""), repr((raw or "")[:100]))
-                if not raw or not raw.strip():
-                    log.error("[attempt %d/3] LLM 返回空内容!", attempt + 1)
-                    continue  # Try again instead of breaking
-                new_code = _strip_code_fences(raw)
-                # Validate syntax before rendering
-                syntax = validate_syntax(new_code)
-                if not syntax["passed"]:
-                    log.warning("[attempt %d/3] LLM 修复的代码有语法错误: %s", attempt + 1, syntax["error"])
-                    # Feed syntax error back to LLM in next iteration
-                    code = new_code  # Use the broken code so LLM can see it
+                err_lines = error_msg.strip().split("\n")
+                key_err = "\n".join(err_lines[-15:]) if len(err_lines) > 15 else error_msg
+
+                fix_prompt = (
+                    f"以下 Manim 代码渲染失败，请修复并输出完整 Python 代码。\n\n"
+                    f"=== 错误 ===\n{key_err[-3000:]}\n\n"
+                    f"=== 代码 ===\n{code}\n\n"
+                    f"要求：只输出代码。中文用 Text()，MathTex 只用纯 LaTeX。"
+                )
+                fix_msgs = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": fix_prompt},
+                ]
+                try:
+                    raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3, max_tokens=16384)
+                    log.info("[attempt %d/3] LLM fix: %d chars", attempt + 1, len(raw or ""))
+                    if not raw or not raw.strip():
+                        yield _sse("step_end", {"step": "fix", "passed": False, "error": "LLM 返回空"})
+                        continue
+                    new_code = _strip_code_fences(raw)
+                    syntax = validate_syntax(new_code)
+                    if not syntax["passed"]:
+                        yield _sse("step_end", {"step": "fix", "passed": False, "error": syntax["error"]})
+                        code = new_code
+                        script_path.write_text(code, encoding="utf-8")
+                        continue
+                    new_code = _ensure_scene(new_code)
+                    code = new_code
                     script_path.write_text(code, encoding="utf-8")
-                    continue  # Try again instead of breaking
-                new_code = _ensure_scene(new_code)
-                code = new_code
-                script_path.write_text(code, encoding="utf-8")
-                log.info("[attempt %d/3] LLM 修复完成，新代码 %d 字符", attempt + 1, len(code))
-            except Exception as e:
-                log.error("[attempt %d/3] LLM 修复失败: %s", attempt + 1, e)
-                continue  # Try again instead of breaking
+                    yield _sse("step_end", {"step": "fix", "passed": True})
+                except Exception as e:
+                    log.error("[attempt %d/3] LLM 修复失败: %s", attempt + 1, e)
+                    yield _sse("step_end", {"step": "fix", "passed": False, "error": str(e)})
+                    continue
 
-        log.info("=== api_render END job_id=%s, passed=%s ===", body.job_id, result and result.get("passed"))
+            if not result or not result["passed"]:
+                error_msg = (result.get("error", "未知错误") if result else "未知错误")
+                lines = error_msg.strip().split("\n")
+                key_lines = [l for l in lines if any(k in l for k in ["Error", "error", "LaTeX", "dvisvgm", "ValueError", "raise"])]
+                summary = "\n".join(key_lines[-5:]) if key_lines else "\n".join(lines[-8:])
+                yield _sse("error", {"message": f"渲染失败（已尝试 {attempt + 1} 次）:\n{summary[-1000:]}"})
+                return
 
-        if not result or not result["passed"]:
-            error_msg = (result.get("error", "未知错误") if result else "未知错误")
-            lines = error_msg.strip().split("\n")
-            key_lines = [l for l in lines if any(k in l for k in ["Error", "error", "LaTeX", "dvisvgm", "ValueError", "raise"])]
-            summary = "\n".join(key_lines[-5:]) if key_lines else "\n".join(lines[-8:])
-            raise HTTPException(status_code=400, detail=f"渲染失败（已尝试 {attempt + 1} 次自动修复）:\n{summary[-1000:]}")
+            video_url = result.get("video_url")
+            video = find_manim_video(job_dir)
+            final_url = video_url
+            if sb is not None and user_id is not None and video:
+                storage_path = f"{user_id}/{body.job_id}.mp4"
+                try:
+                    upload_render_mp4(sb, video, storage_path)
+                    update_project_rendered(sb, body.job_id, storage_path)
+                    final_url = public_object_url(storage_path)
+                except Exception as e:
+                    log.warning("Supabase 上传失败: %s", e)
 
-        video_url = result.get("video_url")
-        video = find_manim_video(job_dir)
-        final_url = video_url
-        if sb is not None and user_id is not None and video:
-            storage_path = f"{user_id}/{body.job_id}.mp4"
-            try:
-                upload_render_mp4(sb, video, storage_path)
-                update_project_rendered(sb, body.job_id, storage_path)
-                final_url = public_object_url(storage_path)
-            except Exception as e:
-                log.warning("Supabase 上传失败: %s", e)
+            yield _sse("complete", {"video_url": final_url})
 
-        return {"ok": True, "video_url": final_url}
+        except Exception as e:
+            import traceback as _tb
+            log.error("api_render error: %s\n%s", e, _tb.format_exc())
+            yield _sse("error", {"message": f"渲染错误: {e}"})
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error("api_render error: %s\n%s", e, _tb.format_exc())
-        raise HTTPException(status_code=500, detail=f"渲染错误: {e}") from e
+    return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
 @app.get("/api/video/{job_id}")

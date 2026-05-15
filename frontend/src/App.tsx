@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { apiFetch, resolveMediaUrl } from "./lib/api";
+import { apiFetch, apiPath, resolveMediaUrl } from "./lib/api";
 import { supabase } from "./lib/supabase";
 import type { Health, ProjectRow } from "./lib/types";
 import { submitAndStreamAgent, submitAndStreamTeacher } from "./lib/sse";
@@ -518,47 +518,83 @@ export default function App() {
       return;
     }
     setBusy(true);
-    setStatus("正在渲染（可能需要 1-3 分钟，含自动修复）...");
+    setStatus("正在渲染...");
     setVideoUrl(null);
 
-    // Timeout after 5 minutes
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
-
     try {
-      const r = await apiFetch(
-        "/api/render",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            job_id: jobId,
-            code: code || null,
-            llm: llmConfig.apiKey
-              ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
-              : null,
-          }),
-          signal: controller.signal,
-        },
-        token
-      );
-      clearTimeout(timeoutId);
-      const data = await r.json().catch(() => ({}));
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const r = await fetch(apiPath("/api/render"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          job_id: jobId,
+          code: code || null,
+          llm: llmConfig.apiKey
+            ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
+            : null,
+        }),
+      });
+
       if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
         const detail = typeof data.detail === "string" ? data.detail : "渲染失败";
         setStatus(detail.length > 200 ? detail.slice(0, 200) + "..." : detail);
         return;
       }
-      const raw = data.video_url as string;
-      setVideoUrl(resolveMediaUrl(raw, Date.now()));
-      setStatus("渲染成功，预览已更新。");
-      void loadProjects();
-    } catch (e) {
-      clearTimeout(timeoutId);
-      if (e instanceof DOMException && e.name === "AbortError") {
-        setStatus("渲染超时（5 分钟），请检查代码或稍后重试。");
-      } else {
-        setStatus(`网络错误：${e instanceof Error ? e.message : String(e)}`);
+
+      // Parse SSE stream
+      const reader = r.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalVideoUrl: string | null = null;
+      let errorMsg: string | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        let currentEvent = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            const dataStr = line.slice(6);
+            try {
+              const data = JSON.parse(dataStr);
+              if (currentEvent === "step_start") {
+                setStatus(data.message || "处理中...");
+              } else if (currentEvent === "step_end") {
+                if (data.passed) {
+                  setStatus(`✓ ${data.step || "步骤"} 完成`);
+                } else {
+                  setStatus(`✗ ${data.step || "步骤"} 失败: ${(data.error || "").slice(0, 100)}`);
+                }
+              } else if (currentEvent === "complete") {
+                finalVideoUrl = data.video_url;
+              } else if (currentEvent === "error") {
+                errorMsg = data.message;
+              }
+            } catch { /* skip */ }
+          }
+        }
       }
+
+      if (errorMsg) {
+        setStatus(errorMsg.length > 200 ? errorMsg.slice(0, 200) + "..." : errorMsg);
+      } else if (finalVideoUrl) {
+        setVideoUrl(resolveMediaUrl(finalVideoUrl, Date.now()));
+        setStatus("渲染成功，预览已更新。");
+        void loadProjects();
+      } else {
+        setStatus("渲染完成，但未返回视频地址。");
+      }
+    } catch (e) {
+      setStatus(`网络错误：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
       void refreshHealth();
