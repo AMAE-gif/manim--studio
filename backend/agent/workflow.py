@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -223,9 +224,15 @@ def _save_teacher_session(session_id: str, data: dict) -> None:
     _teacher_sessions[session_id] = data
 
 
+def _fix_json_escapes(text: str) -> str:
+    """Fix unescaped backslashes in JSON string values (common with LaTeX)."""
+    # Escape backslashes that are NOT already valid JSON escapes
+    # Valid JSON escapes: \\ \" \/ \b \f \n \r \t \uXXXX
+    return re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+
+
 def _parse_json_response(raw: str) -> dict | None:
     import json as _json
-    import re as _re
     text = raw.strip()
 
     # Strip markdown code fences
@@ -242,10 +249,18 @@ def _parse_json_response(raw: str) -> dict | None:
         pass
 
     # Try to extract JSON object from surrounding text
-    match = _re.search(r"\{[\s\S]*\}", text)
+    match = re.search(r"\{[\s\S]*\}", text)
     if match:
+        json_str = match.group()
+        # Try direct parse
         try:
-            return _json.loads(match.group())
+            return _json.loads(json_str)
+        except _json.JSONDecodeError:
+            pass
+        # Try fixing unescaped backslashes (LaTeX in JSON)
+        try:
+            fixed = _fix_json_escapes(json_str)
+            return _json.loads(fixed)
         except _json.JSONDecodeError:
             pass
 
