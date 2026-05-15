@@ -320,6 +320,10 @@ async def run_teacher_workflow(
     # ── Phase 2 or 3: SOLVE or REFINE ──
     solution_data = None
 
+    if refinement and not session_data:
+        log.warning("Refinement requested but no session found (session_id=%s)", session_id)
+        # Don't silently fail — but continue with code generation using problem_text
+
     if refinement and session_data:
         # Phase 3: REFINE
         yield _event("refine", "正在根据反馈修改解法...")

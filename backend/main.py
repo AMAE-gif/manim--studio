@@ -353,49 +353,51 @@ async def api_render(
                 log.warning("Supabase update_project_code 失败: %s", e)
 
         # ── Render + auto-fix loop (max 3 attempts) ──
-        log.info("api_render job_id=%s, has_llm=%s", body.job_id, bool(api_key))
+        log.info("=== api_render START job_id=%s, has_llm=%s ===", body.job_id, bool(api_key))
         result = None
         for attempt in range(3):
+            log.info("[attempt %d/3] 渲染中...", attempt + 1)
             result = await render_animation(code, body.job_id)
             if result["passed"]:
+                log.info("[attempt %d/3] 渲染成功!", attempt + 1)
                 break
 
-            # Failed — try LLM auto-fix
+            error_msg = result.get("error", "Unknown error")
+            log.warning("[attempt %d/3] 渲染失败: %s", attempt + 1, error_msg[:300])
+
+            # No LLM key — can't auto-fix
             if not api_key or api_key == "__direct__":
+                log.warning("[attempt %d/3] 无 LLM API Key，跳过自动修复", attempt + 1)
                 break
 
-            error_msg = result.get("error", "Unknown error")[-4000:]
-            log.warning("Render failed (attempt %d/3), error: %s", attempt + 1, error_msg[:500])
+            # Call LLM to fix the code
+            log.info("[attempt %d/3] 调用 LLM 修复代码 (model=%s, format=%s)...", attempt + 1, model, api_format)
             fix_msgs = [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "修复以下 Manim 代码的渲染错误，只输出完整 Python 代码。"},
-                {"role": "assistant", "content": code},
-                {"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n"
-                    "请修复代码，只输出完整 Python 代码。常见问题：\n"
-                    "1. MathTex/Tex 中不能有中文（中文必须用 Text('中文', font='Noto Sans CJK SC')）\n"
-                    "2. MathTex 中不能有 Unicode 字符\n"
-                    "3. LaTeX 命令要正确（如 \\frac{}{}, \\sqrt{}）\n"
-                    "4. 所有变量必须先定义再使用\n"
-                    "5. 不要用不存在的 manim 类名"},
+                {"role": "user", "content": f"以下是 Manim 代码，运行时报错，请修复后只输出完整 Python 代码。\n\n错误信息：\n{error_msg[-3000:]}\n\n原代码：\n{code}"},
             ]
             try:
                 raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
-                code = _strip_code_fences(raw)
-                code = _ensure_scene(code)
+                if not raw or not raw.strip():
+                    log.error("[attempt %d/3] LLM 返回空内容!", attempt + 1)
+                    break
+                new_code = _strip_code_fences(raw)
+                new_code = _ensure_scene(new_code)
+                code = new_code
                 script_path.write_text(code, encoding="utf-8")
-                log.info("LLM auto-fix attempt %d: new code (%d chars)", attempt + 1, len(code))
+                log.info("[attempt %d/3] LLM 修复完成，新代码 %d 字符", attempt + 1, len(code))
             except Exception as e:
-                log.error("LLM auto-fix failed: %s", e)
+                log.error("[attempt %d/3] LLM 修复失败: %s", attempt + 1, e)
                 break
+
+        log.info("=== api_render END job_id=%s, passed=%s ===", body.job_id, result and result.get("passed"))
 
         if not result or not result["passed"]:
             error_msg = (result.get("error", "未知错误") if result else "未知错误")
-            # Extract the most relevant error line (LaTeX error or Python traceback)
             lines = error_msg.strip().split("\n")
-            # Find the key error line
             key_lines = [l for l in lines if any(k in l for k in ["Error", "error", "LaTeX", "dvisvgm", "ValueError", "raise"])]
             summary = "\n".join(key_lines[-5:]) if key_lines else "\n".join(lines[-8:])
-            raise HTTPException(status_code=400, detail=f"渲染失败（已尝试 {attempt + 1} 次）:\n{summary[-1000:]}")
+            raise HTTPException(status_code=400, detail=f"渲染失败（已尝试 {attempt + 1} 次自动修复）:\n{summary[-1000:]}")
 
         video_url = result.get("video_url")
         video = find_manim_video(job_dir)
