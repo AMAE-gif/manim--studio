@@ -545,9 +545,14 @@ def health():
 @app.get("/api/config")
 def api_config():
     """Return public config for the frontend (Supabase URL + anon key)."""
+    url = os.environ.get("SUPABASE_URL", "")
+    anon = os.environ.get("SUPABASE_ANON_KEY", "")
+    # Fallback: if anon key not set, use service role key (works but not recommended)
+    if not anon:
+        anon = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
     return {
-        "supabase_url": os.environ.get("SUPABASE_URL", ""),
-        "supabase_anon_key": os.environ.get("SUPABASE_ANON_KEY", ""),
+        "supabase_url": url,
+        "supabase_anon_key": anon,
     }
 
 
