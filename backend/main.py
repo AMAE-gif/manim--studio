@@ -111,6 +111,7 @@ class GenerateResponse(BaseModel):
     code: str
     job_id: str
     video_url: str | None = None
+    render_error: str | None = None
 
 
 def _strip_code_fences(text: str) -> str:
@@ -218,10 +219,6 @@ async def api_generate(
     script_path = job_dir / "scene.py"
 
     # Step 2: Syntax validate + auto-fix loop
-    fix_messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": body.prompt},
-    ]
     for syntax_attempt in range(3):  # max 3 attempts
         syntax = validate_syntax(code)
         imports = check_manim_imports(code)
@@ -232,10 +229,15 @@ async def api_generate(
         error_detail = syntax.get("error") or str(imports.get("checks", {}))
         log.warning("Syntax error (attempt %d): %s", syntax_attempt + 1, error_detail[:200])
         if api_key and api_key != "__direct__":
-            fix_messages.append({"role": "assistant", "content": code})
-            fix_messages.append({"role": "user", "content": f"代码有语法错误：\n{error_detail}\n\n请修复语法错误，只输出完整的修复后 Python 代码。"})
+            # Use fresh messages for each fix attempt
+            fix_msgs = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": body.prompt},
+                {"role": "assistant", "content": code},
+                {"role": "user", "content": f"代码有语法错误：\n{error_detail}\n\n请修复语法错误，只输出完整的修复后 Python 代码。"},
+            ]
             try:
-                raw = await _llm_chat(messages=fix_messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+                raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
                 code = _strip_code_fences(raw)
                 code = _ensure_scene(code)
             except Exception as e:
@@ -255,6 +257,7 @@ async def api_generate(
 
     # Step 3: Render + auto-fix loop
     video_url = None
+    render_error = None
     for render_attempt in range(3):  # max 3 attempts
         result = await render_animation(code, job_id)
         if result["passed"]:
@@ -263,15 +266,27 @@ async def api_generate(
 
         # Render failed — try auto-fix
         error_msg = result.get("error", "Unknown error")[-2000:]
+        render_error = error_msg[-500:]  # Store last 500 chars for response
         log.warning("Render failed (attempt %d), auto-fixing: %s", render_attempt + 1, error_msg[:300])
         if api_key and api_key != "__direct__":
-            fix_messages.append({"role": "assistant", "content": code})
-            fix_messages.append({"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文（用 Text()）\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"})
+            # Use fresh messages for each fix attempt
+            fix_msgs = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": body.prompt},
+                {"role": "assistant", "content": code},
+                {"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文（用 Text()）\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"},
+            ]
             try:
-                raw = await _llm_chat(messages=fix_messages, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+                raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
                 code = _strip_code_fences(raw)
                 code = _ensure_scene(code)
                 script_path.write_text(code, encoding="utf-8")
+
+                # Validate syntax after fix before re-rendering
+                syntax = validate_syntax(code)
+                if not syntax["passed"]:
+                    log.warning("Fixed code has syntax error, skipping re-render")
+                    continue
             except Exception as e:
                 log.error("Render fix LLM call failed: %s", e)
                 break
@@ -291,7 +306,7 @@ async def api_generate(
         except Exception as e:
             log.warning("Supabase insert_project 失败（仍返回本地 job）: %s", e)
 
-    return GenerateResponse(code=code, job_id=job_id, video_url=video_url)
+    return GenerateResponse(code=code, job_id=job_id, video_url=video_url, render_error=render_error)
 
 
 class RenderBody(BaseModel):

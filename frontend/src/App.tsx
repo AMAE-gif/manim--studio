@@ -495,7 +495,8 @@ export default function App() {
         setVideoUrl(resolveMediaUrl(data.video_url, Date.now()));
         setStatus("代码已生成并通过渲染验证，动画已就绪。");
       } else {
-        setStatus("代码已生成，但预渲染失败。请检查代码后手动渲染。");
+        const errMsg = data.render_error ? data.render_error.slice(0, 200) : "未知错误";
+        setStatus(`代码已生成，但渲染失败：${errMsg}`);
       }
     } catch (e) {
       setStatus(`生成失败：${e instanceof Error ? e.message : String(e)}`);
