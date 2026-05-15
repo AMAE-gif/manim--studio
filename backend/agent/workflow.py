@@ -490,10 +490,19 @@ async def run_teacher_workflow(
     script_path.write_text(code, encoding="utf-8")
 
     # ── Phase 5: Render test with auto-fix ──
+    RENDER_TIMEOUT = 150  # seconds
+    LLM_TIMEOUT = 120  # seconds
+
     for render_attempt in range(2):  # max 2 attempts (1 initial + 1 fix)
-        yield _event("render_test", "正在预渲染验证..." if render_attempt == 0 else "正在修复渲染错误（调用 LLM 重写代码）...")
+        yield _event("render_test", "正在预渲染验证（最多等待 2 分钟）..." if render_attempt == 0 else "正在重新渲染修复后的代码...")
         try:
-            render_result = await render_animation(code, job_id)
+            render_result = await asyncio.wait_for(
+                render_animation(code, job_id),
+                timeout=RENDER_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            log.error("render_animation timed out after %ds", RENDER_TIMEOUT)
+            render_result = {"passed": False, "error": f"渲染超时（{RENDER_TIMEOUT}秒）", "video_url": None}
         except Exception as e:
             log.error("render_animation exception: %s", e)
             render_result = {"passed": False, "error": f"渲染进程异常: {e}", "video_url": None}
@@ -524,13 +533,16 @@ async def run_teacher_workflow(
         # Render failed — try to auto-fix with LLM
         if render_attempt == 0:
             render_error = render_result.get("error", "Unknown error")[-2000:]
-            yield _event("fix", "正在调用 LLM 修复渲染错误...")
+            yield _event("fix", "正在调用 LLM 修复渲染错误（最多等待 2 分钟）...")
             gen_messages.append({"role": "assistant", "content": raw_content})
             gen_messages.append({"role": "user", "content": f"渲染失败，错误信息：\n{render_error}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"})
             try:
-                raw_content = await _llm_chat(
-                    messages=gen_messages, model=model, api_key=api_key,
-                    base_url=base_url, api_format=api_format, temperature=0.3,
+                raw_content = await asyncio.wait_for(
+                    _llm_chat(
+                        messages=gen_messages, model=model, api_key=api_key,
+                        base_url=base_url, api_format=api_format, temperature=0.3,
+                    ),
+                    timeout=LLM_TIMEOUT,
                 )
                 code = extract_code_from_response(raw_content)
                 yield {"event": "code_generated", "data": {"code": code, "duration": 0}}
@@ -540,6 +552,10 @@ async def run_teacher_workflow(
                 if not syntax_ok["passed"]:
                     yield {"event": "error", "data": {"message": f"修复后语法错误: {syntax_ok.get('error')}", "recoverable": False}}
                     return
+            except asyncio.TimeoutError:
+                log.error("LLM auto-fix timed out after %ds", LLM_TIMEOUT)
+                yield {"event": "error", "data": {"message": f"LLM 修复超时（{LLM_TIMEOUT}秒），请检查 API 配置后重试。", "recoverable": False}}
+                return
             except Exception as e:
                 log.error("Render auto-fix LLM call failed: %s", e)
                 yield {"event": "error", "data": {"message": f"LLM 修复失败: {e}", "recoverable": False}}

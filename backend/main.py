@@ -361,7 +361,11 @@ async def api_render(
         last_error = None
         for attempt in range(3):  # max 3 attempts
             log.info("api_render attempt %d/%d", attempt + 1, 3)
-            result = await render_animation(code, body.job_id)
+            try:
+                result = await asyncio.wait_for(render_animation(code, body.job_id), timeout=150)
+            except asyncio.TimeoutError:
+                log.error("render_animation timed out (attempt %d)", attempt + 1)
+                result = {"passed": False, "error": "渲染超时（150秒）", "video_url": None}
             if result["passed"]:
                 video_url = result.get("video_url")
                 log.info("api_render attempt %d passed, video_url=%s", attempt + 1, video_url)
@@ -380,11 +384,17 @@ async def api_render(
                     {"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文（用 Text()）\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"},
                 ]
                 try:
-                    raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+                    raw = await asyncio.wait_for(
+                        _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3),
+                        timeout=120,
+                    )
                     code = _strip_code_fences(raw)
                     code = _ensure_scene(code)
                     script_path.write_text(code, encoding="utf-8")
                     log.info("LLM auto-fix generated new code (%d chars)", len(code))
+                except asyncio.TimeoutError:
+                    log.error("LLM auto-fix timed out (attempt %d)", attempt + 1)
+                    break
                 except Exception as e:
                     log.error("Auto-fix LLM call failed: %s\n%s", e, _tb.format_exc())
                     break
