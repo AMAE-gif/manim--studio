@@ -364,13 +364,19 @@ async def api_render(
             if not api_key or api_key == "__direct__":
                 break
 
-            error_msg = result.get("error", "Unknown error")[-2000:]
-            log.warning("Render failed (attempt %d/3), calling LLM fix: %s", attempt + 1, error_msg[:200])
+            error_msg = result.get("error", "Unknown error")[-4000:]
+            log.warning("Render failed (attempt %d/3), error: %s", attempt + 1, error_msg[:500])
             fix_msgs = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": "修复以下 Manim 代码的渲染错误，只输出完整 Python 代码。"},
                 {"role": "assistant", "content": code},
-                {"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。"},
+                {"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n"
+                    "请修复代码，只输出完整 Python 代码。常见问题：\n"
+                    "1. MathTex/Tex 中不能有中文（中文必须用 Text('中文', font='Noto Sans CJK SC')）\n"
+                    "2. MathTex 中不能有 Unicode 字符\n"
+                    "3. LaTeX 命令要正确（如 \\frac{}{}, \\sqrt{}）\n"
+                    "4. 所有变量必须先定义再使用\n"
+                    "5. 不要用不存在的 manim 类名"},
             ]
             try:
                 raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
@@ -383,8 +389,13 @@ async def api_render(
                 break
 
         if not result or not result["passed"]:
-            error_msg = (result.get("error", "未知错误") if result else "未知错误")[-500:]
-            raise HTTPException(status_code=400, detail=f"渲染失败（已尝试 {attempt + 1} 次）:\n{error_msg}")
+            error_msg = (result.get("error", "未知错误") if result else "未知错误")
+            # Extract the most relevant error line (LaTeX error or Python traceback)
+            lines = error_msg.strip().split("\n")
+            # Find the key error line
+            key_lines = [l for l in lines if any(k in l for k in ["Error", "error", "LaTeX", "dvisvgm", "ValueError", "raise"])]
+            summary = "\n".join(key_lines[-5:]) if key_lines else "\n".join(lines[-8:])
+            raise HTTPException(status_code=400, detail=f"渲染失败（已尝试 {attempt + 1} 次）:\n{summary[-1000:]}")
 
         video_url = result.get("video_url")
         video = find_manim_video(job_dir)
