@@ -264,7 +264,7 @@ export default function App() {
         onSolutionRefined: (data) => agentDispatch({ type: "SOLUTION_REFINED", steps: data.steps, instruction: data.refinement_applied, stepIndex: null }),
         onCodeGenerated: (data) => agentDispatch({ type: "CODE_GENERATED", code: data.code }),
         onValidationResult: (data) => {
-          agentDispatch({ type: "VALIDATION_RESULT", passed: data.passed, error: data.syntax_error || null });
+          agentDispatch({ type: "VALIDATION_RESULT", passed: data.passed, error: data.syntax_error || undefined });
           agentDispatch({ type: "STEP_END", passed: data.passed, error: data.syntax_error });
           if (!data.passed) {
             agentDispatch({ type: "STEP_START", step: "correct", message: "修正中..." });
@@ -343,7 +343,7 @@ export default function App() {
         onSolutionRefined: (data) => agentDispatch({ type: "SOLUTION_REFINED", steps: data.steps, instruction: data.refinement_applied, stepIndex }),
         onCodeGenerated: (data) => agentDispatch({ type: "CODE_GENERATED", code: data.code }),
         onValidationResult: (data) => {
-          agentDispatch({ type: "VALIDATION_RESULT", passed: data.passed, error: data.syntax_error || null });
+          agentDispatch({ type: "VALIDATION_RESULT", passed: data.passed, error: data.syntax_error || undefined });
           agentDispatch({ type: "STEP_END", passed: data.passed, error: data.syntax_error });
           if (!data.passed) {
             agentDispatch({ type: "STEP_START", step: "correct", message: "修正中..." });
