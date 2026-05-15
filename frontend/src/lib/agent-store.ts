@@ -135,7 +135,16 @@ export const initialState: AgentState = {
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
-    case "STEP_START":
+    case "STEP_START": {
+      // Heartbeat updates: update the last render_test step's message instead of adding a new entry
+      if (action.step === "render_progress" && state.steps.length > 0) {
+        const lastStep = state.steps[state.steps.length - 1];
+        if (lastStep.step === "render_test" || lastStep.step === "render_progress") {
+          const updated = [...state.steps];
+          updated[updated.length - 1] = { ...lastStep, message: action.message };
+          return { ...state, steps: updated };
+        }
+      }
       return {
         ...state,
         currentStep: action.step,
@@ -143,16 +152,19 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           : action.step === "generate" ? "generating"
           : action.step === "validate" ? "validating"
           : action.step === "render_test" ? "rendering"
+          : action.step === "render_progress" ? "rendering"
           : action.step === "correct" ? "correcting"
           : action.step === "extract" ? "extracting"
           : action.step === "solve" ? "solving"
           : action.step === "refine" ? "refining"
+          : action.step === "fix" ? "correcting"
           : state.status,
         steps: [
           ...state.steps,
           { step: action.step, message: action.message, startedAt: Date.now() },
         ],
       };
+    }
 
     case "STEP_END": {
       const steps = [...state.steps];
