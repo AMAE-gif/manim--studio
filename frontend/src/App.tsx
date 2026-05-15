@@ -513,25 +513,32 @@ export default function App() {
       return;
     }
     setBusy(true);
-    setStatus("Manim 正在渲染（首次可能较慢）...");
+    setStatus("Manim 正在渲染（含自动修复）...");
     setVideoUrl(null);
     try {
       const r = await apiFetch(
         "/api/render",
         {
           method: "POST",
-          body: JSON.stringify({ job_id: jobId, code: code || null }),
+          body: JSON.stringify({
+            job_id: jobId,
+            code: code || null,
+            llm: llmConfig.apiKey
+              ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
+              : null,
+          }),
         },
         token
       );
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setStatus(typeof data.detail === "string" ? data.detail : "渲染失败");
+        const detail = typeof data.detail === "string" ? data.detail : "渲染失败";
+        setStatus(detail.length > 200 ? detail.slice(0, 200) + "..." : detail);
         return;
       }
       const raw = data.video_url as string;
       setVideoUrl(resolveMediaUrl(raw, Date.now()));
-      setStatus("预览已更新。");
+      setStatus("渲染成功，预览已更新。");
       void loadProjects();
     } catch (e) {
       setStatus(`网络错误：${e instanceof Error ? e.message : String(e)}`);

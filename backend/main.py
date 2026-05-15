@@ -312,6 +312,7 @@ async def api_generate(
 class RenderBody(BaseModel):
     job_id: str
     code: str | None = None
+    llm: LlmConfig | None = None
 
 
 @app.post("/api/render")
@@ -319,7 +320,8 @@ async def api_render(
     body: RenderBody,
     user_id: UUID | None = Depends(get_optional_user),
 ):
-    import asyncio as _asyncio
+    from agent.tools import render_animation
+    from agent.workflow import _llm_chat
 
     job_dir = WORKDIR / body.job_id
     if not job_dir.is_dir():
@@ -332,55 +334,68 @@ async def api_render(
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
+    code = script_path.read_text(encoding="utf-8")
+
+    # Get LLM config for auto-fix
+    api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
+    base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
+    model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    api_format = (body.llm.api_format if body.llm and body.llm.api_format else "openai")
+
     sb = get_supabase_admin()
     if sb is not None and user_id is not None:
         try:
-            update_project_code(sb, body.job_id, script_path.read_text(encoding="utf-8"))
+            update_project_code(sb, body.job_id, code)
         except Exception as e:
             log.warning("Supabase update_project_code 失败: %s", e)
 
-    timeout_sec = int(os.environ.get("MANIM_TIMEOUT_SEC", "120"))
-    try:
-        proc = await _asyncio.create_subprocess_exec(
-            "manim", "render", "-ql", str(script_path), SCENE_CLASS,
-            cwd=str(job_dir),
-            stdout=_asyncio.subprocess.PIPE,
-            stderr=_asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
-        stdout_str = stdout.decode(encoding="utf-8", errors="replace") if stdout else ""
-        stderr_str = stderr.decode(encoding="utf-8", errors="replace") if stderr else ""
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=500,
-            detail="未找到 manim 命令，请先安装：pip install manim",
-        )
-    except _asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        raise HTTPException(status_code=504, detail="渲染超时，请简化描述后重试")
+    # Render + auto-fix loop
+    video_url = None
+    last_error = None
+    for attempt in range(3):  # max 3 attempts
+        result = await render_animation(code, body.job_id)
+        if result["passed"]:
+            video_url = result.get("video_url")
+            break
 
-    if proc.returncode != 0:
-        err = (stderr_str or stdout_str or "")[-8000:]
-        raise HTTPException(status_code=400, detail=f"Manim 渲染失败:\n{err}")
+        # Render failed — try auto-fix
+        error_msg = result.get("error", "Unknown error")[-2000:]
+        last_error = error_msg[-500:]
+        log.warning("Render failed (attempt %d), auto-fixing: %s", attempt + 1, error_msg[:300])
+        if api_key and api_key != "__direct__":
+            fix_msgs = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "修复以下 Manim 代码的渲染错误"},
+                {"role": "assistant", "content": code},
+                {"role": "user", "content": f"渲染失败，错误信息：\n{error_msg}\n\n请修复代码，只输出完整 Python 代码。常见问题：\n1. 不要在 MathTex 中使用中文（用 Text()）\n2. 确保所有变量已定义\n3. 使用 manim 社区版 API"},
+            ]
+            try:
+                raw = await _llm_chat(messages=fix_msgs, model=model, api_key=api_key, base_url=base_url, api_format=api_format, temperature=0.3)
+                code = _strip_code_fences(raw)
+                code = _ensure_scene(code)
+                script_path.write_text(code, encoding="utf-8")
+            except Exception as e:
+                log.error("Auto-fix LLM call failed: %s", e)
+                break
+        else:
+            break
+
+    if not video_url:
+        # All render attempts failed
+        raise HTTPException(status_code=400, detail=f"Manim 渲染失败（已尝试自动修复）:\n{last_error or '未知错误'}")
 
     video = find_manim_video(job_dir)
-    if not video:
-        raise HTTPException(status_code=500, detail="未找到输出视频，请检查 manim 版本与场景类名")
-
-    video_url = f"/api/video/{body.job_id}"
-    if sb is not None and user_id is not None:
+    final_url = video_url
+    if sb is not None and user_id is not None and video:
         storage_path = f"{user_id}/{body.job_id}.mp4"
         try:
             upload_render_mp4(sb, video, storage_path)
             update_project_rendered(sb, body.job_id, storage_path)
-            video_url = public_object_url(storage_path)
+            final_url = public_object_url(storage_path)
         except Exception as e:
             log.warning("Supabase 上传/更新失败，回退为本地 URL: %s", e)
 
-    return {"ok": True, "video_url": video_url}
+    return {"ok": True, "video_url": final_url}
 
 
 @app.get("/api/video/{job_id}")
