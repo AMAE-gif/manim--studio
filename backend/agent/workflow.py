@@ -495,17 +495,32 @@ async def run_teacher_workflow(
 
     for render_attempt in range(2):  # max 2 attempts (1 initial + 1 fix)
         yield _event("render_test", "正在预渲染验证（最多等待 2 分钟）..." if render_attempt == 0 else "正在重新渲染修复后的代码...")
+
+        # Use a task + heartbeat so the frontend knows we're alive
+        render_task = asyncio.create_task(render_animation(code, job_id))
+        render_result = None
         try:
-            render_result = await asyncio.wait_for(
-                render_animation(code, job_id),
-                timeout=RENDER_TIMEOUT,
-            )
+            done, pending = await asyncio.wait({render_task}, timeout=RENDER_TIMEOUT)
+            while not done:
+                # Heartbeat — tell frontend we're still working
+                elapsed = int(time.time() - t0)
+                yield _event("render_progress", f"正在渲染中...（已等待 {elapsed} 秒）")
+                done, pending = await asyncio.wait(pending, timeout=10)
+            # Get result
+            render_result = render_task.result()
         except asyncio.TimeoutError:
-            log.error("render_animation timed out after %ds", RENDER_TIMEOUT)
+            render_task.cancel()
             render_result = {"passed": False, "error": f"渲染超时（{RENDER_TIMEOUT}秒）", "video_url": None}
         except Exception as e:
             log.error("render_animation exception: %s", e)
             render_result = {"passed": False, "error": f"渲染进程异常: {e}", "video_url": None}
+
+        if render_result is None:
+            try:
+                render_result = render_task.result()
+            except Exception as e:
+                log.error("render_task.result() failed: %s", e)
+                render_result = {"passed": False, "error": f"渲染异常: {e}", "video_url": None}
 
         yield {
             "event": "render_result",

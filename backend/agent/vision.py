@@ -129,22 +129,22 @@ async def analyze_image_style(
         return f"视觉模型调用失败: {e}"
 
 
-MATH_PROBLEM_PROMPT = """你是一个数学问题识别专家。仔细分析这张图片，提取其中的数学问题。
+MATH_PROBLEM_PROMPT = """你是一个数学问题识别专家。分析这张图片，提取数学题目。
 
-请输出以下内容（使用精确的 JSON 格式）：
+请输出以下 JSON（只输出 JSON，不要其他文字）：
 
 {
-  "problem_text": "完整的题目文字描述",
-  "expressions": ["数学表达式1", "数学表达式2"],
+  "problem_text": "简明扼要的题目描述（1-3句话，保留关键数学表达式，不要逐字抄写）",
+  "expressions": ["关键数学表达式1", "表达式2"],
   "problem_type": "方程求解|几何证明|函数分析|数列|概率|...",
   "difficulty": "easy|medium|hard",
-  "visual_elements": ["题目中提到的图形元素，如坐标系、圆、三角形等"]
+  "visual_elements": ["关键图形元素"]
 }
 
 注意：
-1. 尽量保持原题的数学符号和表达式
-2. 如果有图形，描述图形中的关键信息
-3. 不要解题，只提取题目
+1. problem_text 要精简，只保留核心题意和数学表达式
+2. 不要解题，只提取题目
+3. 如果有图形，简要描述关键信息
 """
 
 
