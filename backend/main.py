@@ -99,6 +99,7 @@ class LlmConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     model: str | None = None
+    api_format: str = "openai"  # "openai" or "anthropic"
 
 
 class GenerateBody(BaseModel):
