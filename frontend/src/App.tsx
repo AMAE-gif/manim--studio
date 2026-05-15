@@ -238,6 +238,7 @@ export default function App() {
         prompt: agentState.problemText || prompt,
         image_base64: null,  // Don't re-send image; problem text is already extracted
         content_type: "image/png",
+        phase: "full",  // solve → generate code (so user sees solution steps)
         llm: freshLlm.apiKey
           ? { api_key: freshLlm.apiKey, base_url: freshLlm.baseUrl, model: freshLlm.model, api_format: freshLlm.apiFormat }
           : null,
