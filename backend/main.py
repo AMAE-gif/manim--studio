@@ -542,6 +542,15 @@ def health():
     }
 
 
+@app.get("/api/config")
+def api_config():
+    """Return public config for the frontend (Supabase URL + anon key)."""
+    return {
+        "supabase_url": os.environ.get("SUPABASE_URL", ""),
+        "supabase_anon_key": os.environ.get("SUPABASE_ANON_KEY", ""),
+    }
+
+
 @app.get("/api/debug-env")
 def debug_env():
     """Temporary: check which env vars exist (length only, no secrets)."""

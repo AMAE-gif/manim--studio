@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { apiFetch, apiPath, resolveMediaUrl } from "./lib/api";
-import { supabase } from "./lib/supabase";
+import { supabase, initSupabase } from "./lib/supabase";
 import type { Health, ProjectRow } from "./lib/types";
 import { submitAndStreamAgent, submitAndStreamTeacher } from "./lib/sse";
 import { callLLM } from "./lib/llm-client";
@@ -86,20 +86,22 @@ export default function App() {
     void refreshHealth();
   }, [refreshHealth]);
 
+  // Initialize Supabase from backend config, then listen for auth changes
   useEffect(() => {
-    if (!supabase) {
-      setSession(null);
-      return;
-    }
-    void supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session ?? null);
+    let unsub: (() => void) | undefined;
+
+    void initSupabase().then(() => {
+      if (!supabase) return;
+      void supabase.auth.getSession().then(({ data }) => {
+        setSession(data.session ?? null);
+      });
+      const { data } = supabase.auth.onAuthStateChange((_event, sess) => {
+        setSession(sess);
+      });
+      unsub = () => data.subscription.unsubscribe();
     });
-    const { data } = supabase.auth.onAuthStateChange((_event, sess) => {
-      setSession(sess);
-    });
-    return () => {
-      data.subscription.unsubscribe();
-    };
+
+    return () => { unsub?.(); };
   }, []);
 
   useEffect(() => {
