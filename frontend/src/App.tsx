@@ -518,8 +518,13 @@ export default function App() {
       return;
     }
     setBusy(true);
-    setStatus("Manim 正在渲染（含自动修复）...");
+    setStatus("正在渲染（可能需要 1-3 分钟，含自动修复）...");
     setVideoUrl(null);
+
+    // Timeout after 5 minutes
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+
     try {
       const r = await apiFetch(
         "/api/render",
@@ -532,9 +537,11 @@ export default function App() {
               ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
               : null,
           }),
+          signal: controller.signal,
         },
         token
       );
+      clearTimeout(timeoutId);
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         const detail = typeof data.detail === "string" ? data.detail : "渲染失败";
@@ -546,7 +553,12 @@ export default function App() {
       setStatus("渲染成功，预览已更新。");
       void loadProjects();
     } catch (e) {
-      setStatus(`网络错误：${e instanceof Error ? e.message : String(e)}`);
+      clearTimeout(timeoutId);
+      if (e instanceof DOMException && e.name === "AbortError") {
+        setStatus("渲染超时（5 分钟），请检查代码或稍后重试。");
+      } else {
+        setStatus(`网络错误：${e instanceof Error ? e.message : String(e)}`);
+      }
     } finally {
       setBusy(false);
       void refreshHealth();
