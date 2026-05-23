@@ -684,6 +684,33 @@ def debug_env():
     return result
 
 
+@app.get("/api/debug-jwt")
+def debug_jwt(authorization: str | None = Header(default=None)):
+    """Debug: decode JWT and show result (temporarily)."""
+    from supabase_sync import parse_bearer_header, decode_user_id_from_jwt
+    import logging
+    log = logging.getLogger("debug-jwt")
+
+    token = parse_bearer_header(authorization)
+    if not token:
+        return {"has_token": False, "error": "No Bearer token in Authorization header"}
+
+    secret = (os.environ.get("SUPABASE_JWT_SECRET") or "").strip()
+    log.info("DEBUG JWT: token length=%d, secret length=%d, token_prefix=%s", len(token), len(secret), token[:20])
+
+    try:
+        import jwt as pyjwt
+        payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
+        sub = payload.get("sub")
+        return {"has_token": True, "decoded": True, "sub": sub, "role": payload.get("role"), "iss": payload.get("iss")}
+    except pyjwt.ExpiredSignatureError:
+        return {"has_token": True, "decoded": False, "error": "Token expired"}
+    except pyjwt.InvalidSignatureError:
+        return {"has_token": True, "decoded": False, "error": "Signature mismatch — JWT secret doesn't match signing key"}
+    except Exception as e:
+        return {"has_token": True, "decoded": False, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.post("/api/debug-llm")
 async def debug_llm(body: dict):
     """Debug: test LLM connection with a simple request."""

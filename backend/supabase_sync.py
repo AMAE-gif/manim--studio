@@ -8,8 +8,55 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+import json
+import logging
+import time
+import urllib.request
+from functools import lru_cache
+
 import jwt
+from jwt.algorithms import ECAlgorithm
 from supabase import Client, create_client
+
+_log = logging.getLogger("supabase_sync")
+
+# Cache for JWKs fetched from Supabase (keyed by supabase URL)
+_jwks_cache: dict[str, tuple[float, list[dict]]] = {}
+_JWKS_TTL = 3600  # 1 hour
+
+
+def _fetch_jwks(supabase_url: str) -> list[dict]:
+    now = time.time()
+    cached = _jwks_cache.get(supabase_url)
+    if cached and now - cached[0] < _JWKS_TTL:
+        return cached[1]
+    jwks_url = f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+    try:
+        req = urllib.request.Request(jwks_url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        keys = data.get("keys", [])
+        _jwks_cache[supabase_url] = (now, keys)
+        _log.info("Fetched %d JWKs from %s", len(keys), jwks_url)
+        return keys
+    except Exception as e:
+        _log.warning("Failed to fetch JWKs from %s: %s", jwks_url, e)
+        return cached[1] if cached else []
+
+
+def _verify_es256(token: str, jwks: list[dict]) -> dict | None:
+    unverified_header = jwt.get_unverified_header(token)
+    kid = unverified_header.get("kid")
+    for jwk in jwks:
+        if jwk.get("kid") == kid:
+            try:
+                pub_key = ECAlgorithm.from_jwk(json.dumps(jwk))
+                return jwt.decode(token, pub_key, algorithms=["ES256"], options={"verify_aud": False})
+            except Exception as e:
+                _log.error("ES256 verification failed: %s", e)
+                return None
+    _log.warning("No matching JWK found for kid=%s", kid)
+    return None
 
 _BUCKET = "renders"
 
@@ -33,21 +80,64 @@ def get_supabase_admin() -> Client | None:
 
 
 def decode_user_id_from_jwt(token: str) -> UUID | None:
-    secret = (os.environ.get("SUPABASE_JWT_SECRET") or "").strip()
-    if not secret or not token:
+    if not token:
+        _log.warning("No JWT token provided")
+        return None
+
+    # Detect algorithm from header
+    try:
+        header = jwt.get_unverified_header(token)
+    except Exception as e:
+        _log.error("Cannot parse JWT header: %s", e)
+        return None
+
+    alg = header.get("alg", "")
+    payload = None
+
+    if alg == "ES256":
+        # ES256 — fetch public key from Supabase JWKs
+        supabase_url = (os.environ.get("SUPABASE_URL") or "").strip()
+        if not supabase_url:
+            _log.warning("SUPABASE_URL not set — cannot fetch JWKs for ES256")
+            return None
+        jwks = _fetch_jwks(supabase_url)
+        if not jwks:
+            _log.error("No JWKs available for ES256 verification")
+            return None
+        payload = _verify_es256(token, jwks)
+    elif alg == "HS256":
+        # Legacy HS256 — use JWT secret
+        secret = (os.environ.get("SUPABASE_JWT_SECRET") or "").strip()
+        if not secret:
+            _log.warning("SUPABASE_JWT_SECRET is empty — cannot decode HS256 JWT")
+            return None
+        try:
+            payload = jwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
+        except jwt.ExpiredSignatureError:
+            _log.warning("JWT token has expired")
+            return None
+        except jwt.InvalidSignatureError:
+            _log.error("HS256 signature mismatch — SUPABASE_JWT_SECRET doesn't match")
+            return None
+        except Exception as e:
+            _log.error("HS256 decode failed: %s", e)
+            return None
+    else:
+        _log.error("Unsupported JWT algorithm: %s", alg)
+        return None
+
+    if payload is None:
+        _log.error("JWT verification failed (alg=%s)", alg)
+        return None
+
+    sub = payload.get("sub")
+    if not sub or not isinstance(sub, str):
+        _log.warning("JWT payload missing 'sub': %s", list(payload.keys()))
         return None
     try:
-        payload = jwt.decode(
-            token,
-            secret,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-        sub = payload.get("sub")
-        if not sub or not isinstance(sub, str):
-            return None
         return UUID(sub)
-    except (jwt.PyJWTError, ValueError):
+    except ValueError:
+        _log.error("Invalid UUID in JWT sub: %s", sub)
         return None
 
 
