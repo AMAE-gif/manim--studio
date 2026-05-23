@@ -15,8 +15,25 @@ import urllib.request
 from functools import lru_cache
 
 import jwt
-from jwt.algorithms import ECAlgorithm
 from supabase import Client, create_client
+
+try:
+    from jwt.algorithms import ECAlgorithm
+    _HAS_EC = True
+except ImportError:
+    _HAS_EC = False
+
+# Manual ES256 verification fallback using cryptography directly
+try:
+    from cryptography.hazmat.primitives.asymmetric.ec import (
+        SECP256R1, EllipticCurvePublicNumbers, derive_private_key, ECDH
+    )
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+    from cryptography.hazmat.primitives.hashes import SHA256
+    from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
+    _HAS_CRYPTOGRAPHY = True
+except ImportError:
+    _HAS_CRYPTOGRAPHY = False
 
 _log = logging.getLogger("supabase_sync")
 
@@ -48,15 +65,57 @@ def _verify_es256(token: str, jwks: list[dict]) -> dict | None:
     unverified_header = jwt.get_unverified_header(token)
     kid = unverified_header.get("kid")
     for jwk in jwks:
-        if jwk.get("kid") == kid:
+        if jwk.get("kid") != kid:
+            continue
+        # Try PyJWT's built-in ES256 first
+        if _HAS_EC:
             try:
                 pub_key = ECAlgorithm.from_jwk(json.dumps(jwk))
                 return jwt.decode(token, pub_key, algorithms=["ES256"], options={"verify_aud": False})
             except Exception as e:
-                _log.error("ES256 verification failed: %s", e)
+                _log.warning("PyJWT ES256 failed, trying manual verify: %s", e)
+        # Fallback: manual ES256 verification with cryptography
+        if _HAS_CRYPTOGRAPHY:
+            try:
+                return _verify_es256_manual(token, jwk)
+            except Exception as e:
+                _log.error("Manual ES256 verification failed (kid=%s): %s — %s", kid, type(e).__name__, e)
                 return None
-    _log.warning("No matching JWK found for kid=%s", kid)
+        _log.error("No ES256 verification method available (neither PyJWT[cryptography] nor cryptography installed)")
+        return None
+    _log.warning("No matching JWK found for kid=%s (available kids: %s)", kid, [k.get("kid") for k in jwks])
     return None
+
+
+def _verify_es256_manual(token: str, jwk: dict) -> dict:
+    """Verify ES256 JWT manually using cryptography library."""
+    import base64 as _b64
+
+    def _b64url_decode(s: str) -> bytes:
+        s += "=" * (4 - len(s) % 4)
+        return _b64.urlsafe_b64decode(s)
+
+    # Build public key from JWK
+    x = int.from_bytes(_b64url_decode(jwk["x"]), "big")
+    y = int.from_bytes(_b64url_decode(jwk["y"]), "big")
+    pub_numbers = EllipticCurvePublicNumbers(x, y, SECP256R1())
+    pub_key = pub_numbers.public_key()
+
+    # Split token
+    parts = token.split(".")
+    signing_input = f"{parts[0]}.{parts[1]}".encode()
+    sig_bytes = _b64url_decode(parts[2])
+
+    # Convert DER signature to (r, s) format
+    r, s = decode_dss_signature(sig_bytes)
+
+    # Verify
+    pub_key.verify(sig_bytes, signing_input, ECDSA(SHA256()))
+
+    # Decode payload
+    payload = json.loads(_b64url_decode(parts[1]))
+    _log.info("ES256 manual verification succeeded for sub=%s", payload.get("sub"))
+    return payload
 
 _BUCKET = "renders"
 
