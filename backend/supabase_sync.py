@@ -20,7 +20,7 @@ from supabase import Client, create_client
 from cryptography.hazmat.primitives.asymmetric.ec import (
     SECP256R1, EllipticCurvePublicNumbers, ECDSA,
 )
-from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.hazmat.primitives.hashes import SHA256
 
 _log = logging.getLogger("supabase_sync")
@@ -57,7 +57,6 @@ def _verify_es256(token: str, jwks: list[dict]) -> dict | None:
         if jwk.get("kid") != kid:
             continue
         try:
-            # Build EC public key from JWK
             import base64 as _b64
             def _b64url_decode(s: str) -> bytes:
                 s += "=" * (4 - len(s) % 4)
@@ -67,15 +66,18 @@ def _verify_es256(token: str, jwks: list[dict]) -> dict | None:
             y = int.from_bytes(_b64url_decode(jwk["y"]), "big")
             pub_key = EllipticCurvePublicNumbers(x, y, SECP256R1()).public_key()
 
-            # Split token and verify signature
             parts = token.split(".")
             signing_input = f"{parts[0]}.{parts[1]}".encode()
-            sig_bytes = _b64url_decode(parts[2])
+            raw_sig = _b64url_decode(parts[2])
 
-            # cryptography returns DER-encoded signature, verify directly
-            pub_key.verify(sig_bytes, signing_input, ECDSA(SHA256()))
+            # JOSE uses raw (r||s) signature; cryptography expects DER-encoded
+            half = len(raw_sig) // 2
+            r = int.from_bytes(raw_sig[:half], "big")
+            s = int.from_bytes(raw_sig[half:], "big")
+            der_sig = encode_dss_signature(r, s)
 
-            # Signature valid — decode payload
+            pub_key.verify(der_sig, signing_input, ECDSA(SHA256()))
+
             payload = json.loads(_b64url_decode(parts[1]))
             _log.info("ES256 verified via cryptography, sub=%s", payload.get("sub"))
             return payload
