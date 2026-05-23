@@ -611,7 +611,18 @@ export default function App() {
   };
 
   const openProject = async (id: string) => {
-    if (!token) return;
+    if (!token) {
+      const local = projects.find((p) => p.job_id === id);
+      if (local) {
+        setJobId(local.job_id);
+        setSelectedProjectId(local.job_id);
+        setPrompt(local.prompt ?? "");
+        setCode("");
+        setVideoUrl(null);
+        setStatus("");
+      }
+      return;
+    }
     setBusy(true);
     setStatus("正在载入云端项目...");
     try {
@@ -683,11 +694,19 @@ export default function App() {
 
   const newProject = async (name: string) => {
     if (!token) {
+      const localId = `local-${Date.now()}`;
+      const localProject: ProjectRow = {
+        job_id: localId,
+        prompt: name,
+        status: "local",
+        created_at: new Date().toISOString(),
+      };
+      setProjects((prev) => [localProject, ...prev]);
       setPrompt(name);
       setCode("");
-      setJobId(null);
+      setJobId(localId);
+      setSelectedProjectId(localId);
       setVideoUrl(null);
-      setSelectedProjectId(null);
       setStatus("");
       agentDispatch({ type: "RESET" });
       return;
