@@ -693,6 +693,7 @@ export default function App() {
   };
 
   const newProject = async (name: string) => {
+    // If not logged in, create locally
     if (!token) {
       const localId = `local-${Date.now()}`;
       const localProject: ProjectRow = {
@@ -711,6 +712,7 @@ export default function App() {
       agentDispatch({ type: "RESET" });
       return;
     }
+    // Logged in — try cloud create
     setBusy(true);
     try {
       const r = await apiFetch("/api/project", {
@@ -718,20 +720,52 @@ export default function App() {
         body: JSON.stringify({ name }),
       }, token);
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        setStatus(typeof data.detail === "string" ? data.detail : "创建项目失败");
+      if (r.ok) {
+        setPrompt(name);
+        setCode("");
+        setJobId(data.job_id);
+        setSelectedProjectId(data.job_id);
+        setVideoUrl(null);
+        setStatus("新项目已创建。");
+        agentDispatch({ type: "RESET" });
+        await loadProjects();
         return;
       }
+      // API failed — fallback to local mode so user can still work
+      console.warn("Cloud create failed, falling back to local:", data);
+      const localId = `local-${Date.now()}`;
+      const localProject: ProjectRow = {
+        job_id: localId,
+        prompt: name,
+        status: "local",
+        created_at: new Date().toISOString(),
+      };
+      setProjects((prev) => [localProject, ...prev]);
       setPrompt(name);
       setCode("");
-      setJobId(data.job_id);
-      setSelectedProjectId(data.job_id);
+      setJobId(localId);
+      setSelectedProjectId(localId);
       setVideoUrl(null);
-      setStatus("新项目已创建。");
+      setStatus("云端创建失败，已切换为本地模式。");
       agentDispatch({ type: "RESET" });
-      await loadProjects();
     } catch (e) {
-      setStatus(`创建失败：${e instanceof Error ? e.message : String(e)}`);
+      // Network error — fallback to local
+      console.warn("Cloud create error, falling back to local:", e);
+      const localId = `local-${Date.now()}`;
+      const localProject: ProjectRow = {
+        job_id: localId,
+        prompt: name,
+        status: "local",
+        created_at: new Date().toISOString(),
+      };
+      setProjects((prev) => [localProject, ...prev]);
+      setPrompt(name);
+      setCode("");
+      setJobId(localId);
+      setSelectedProjectId(localId);
+      setVideoUrl(null);
+      setStatus("网络错误，已切换为本地模式。");
+      agentDispatch({ type: "RESET" });
     } finally {
       setBusy(false);
     }

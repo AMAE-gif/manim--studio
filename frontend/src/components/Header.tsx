@@ -48,9 +48,17 @@ export function Header({ health, onLlmConfigChange, onVisionChange, mode, onMode
         </div>
 
         {health && (
-          <div className="flex items-center gap-1.5">
-            <div className={`w-1.5 h-1.5 rounded-full ${health.manim_cli ? "bg-green-400" : "bg-red-400"}`} />
-            <span className="text-[11px] text-white/40">Manim</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${health.manim_cli ? "bg-green-400" : "bg-red-400"}`} />
+              <span className="text-[11px] text-white/40">Manim</span>
+            </div>
+            {health.supabase_service_configured !== undefined && (
+              <div className="flex items-center gap-1.5" title={health.supabase_jwt_configured === false ? "JWT 未配置，登录功能不可用" : "Supabase 已配置"}>
+                <div className={`w-1.5 h-1.5 rounded-full ${health.supabase_jwt_configured ? "bg-green-400" : "bg-yellow-400"}`} />
+                <span className="text-[11px] text-white/40">Auth</span>
+              </div>
+            )}
           </div>
         )}
         <SettingsDialog onConfigChange={onLlmConfigChange} onVisionChange={onVisionChange} accessToken={accessToken} />
