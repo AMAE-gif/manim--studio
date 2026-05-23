@@ -17,11 +17,11 @@ from functools import lru_cache
 import jwt
 from supabase import Client, create_client
 
-try:
-    from jose import jwt as jose_jwt, JWTError as JoseJWTError
-    _HAS_JOSE = True
-except ImportError:
-    _HAS_JOSE = False
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    SECP256R1, EllipticCurvePublicNumbers, ECDSA,
+)
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.hashes import SHA256
 
 _log = logging.getLogger("supabase_sync")
 
@@ -53,32 +53,37 @@ def _verify_es256(token: str, jwks: list[dict]) -> dict | None:
     unverified_header = jwt.get_unverified_header(token)
     kid = unverified_header.get("kid")
 
-    # Build a python-jose compatible JWKS
-    if _HAS_JOSE:
+    for jwk in jwks:
+        if jwk.get("kid") != kid:
+            continue
         try:
-            # python-jose can verify directly with a JWKSet
-            jwk_set = {"keys": jwks}
-            payload = jose_jwt.decode(token, jwk_set, algorithms=["ES256"], options={"verify_aud": False})
-            _log.info("ES256 verified via python-jose, sub=%s", payload.get("sub"))
+            # Build EC public key from JWK
+            import base64 as _b64
+            def _b64url_decode(s: str) -> bytes:
+                s += "=" * (4 - len(s) % 4)
+                return _b64.urlsafe_b64decode(s)
+
+            x = int.from_bytes(_b64url_decode(jwk["x"]), "big")
+            y = int.from_bytes(_b64url_decode(jwk["y"]), "big")
+            pub_key = EllipticCurvePublicNumbers(x, y, SECP256R1()).public_key()
+
+            # Split token and verify signature
+            parts = token.split(".")
+            signing_input = f"{parts[0]}.{parts[1]}".encode()
+            sig_bytes = _b64url_decode(parts[2])
+
+            # cryptography returns DER-encoded signature, verify directly
+            pub_key.verify(sig_bytes, signing_input, ECDSA(SHA256()))
+
+            # Signature valid — decode payload
+            payload = json.loads(_b64url_decode(parts[1]))
+            _log.info("ES256 verified via cryptography, sub=%s", payload.get("sub"))
             return payload
-        except JoseJWTError as e:
-            _log.error("python-jose ES256 verification failed: %s", e)
-            return None
         except Exception as e:
-            _log.error("python-jose ES256 unexpected error: %s — %s", type(e).__name__, e)
+            _log.error("ES256 verification failed (kid=%s): %s — %s", kid, type(e).__name__, e)
             return None
 
-    # Fallback: try PyJWT
-    try:
-        from jwt.algorithms import ECAlgorithm
-        for jwk in jwks:
-            if jwk.get("kid") == kid:
-                pub_key = ECAlgorithm.from_jwk(json.dumps(jwk))
-                return jwt.decode(token, pub_key, algorithms=["ES256"], options={"verify_aud": False})
-    except Exception as e:
-        _log.error("PyJWT ES256 failed: %s", e)
-
-    _log.error("No ES256 verification method available")
+    _log.warning("No matching JWK found for kid=%s (available: %s)", kid, [k.get("kid") for k in jwks])
     return None
 
 _BUCKET = "renders"
