@@ -17,12 +17,6 @@ from functools import lru_cache
 import jwt
 from supabase import Client, create_client
 
-from cryptography.hazmat.primitives.asymmetric.ec import (
-    SECP256R1, EllipticCurvePublicNumbers, ECDSA,
-)
-from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
-from cryptography.hazmat.primitives.hashes import SHA256
-
 _log = logging.getLogger("supabase_sync")
 
 # Cache for JWKs fetched from Supabase (keyed by supabase URL)
@@ -50,6 +44,16 @@ def _fetch_jwks(supabase_url: str) -> list[dict]:
 
 
 def _verify_es256(token: str, jwks: list[dict]) -> dict | None:
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ec import (
+            SECP256R1, EllipticCurvePublicNumbers, ECDSA,
+        )
+        from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+        from cryptography.hazmat.primitives.hashes import SHA256
+    except ImportError:
+        _log.error("cryptography package not installed — cannot verify ES256")
+        return None
+
     unverified_header = jwt.get_unverified_header(token)
     kid = unverified_header.get("kid")
 
