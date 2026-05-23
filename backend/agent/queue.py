@@ -46,6 +46,7 @@ async def submit_job(
     style_analysis: str | None = None,
     rules: AnimationRules | None = None,
     max_retries: int = 3,
+    on_complete=None,
 ) -> tuple[str, int]:
     """Submit a job. Returns (job_id, queue_position)."""
     job_id = str(uuid.uuid4())
@@ -63,6 +64,7 @@ async def submit_job(
             rules=rules,
             max_syntax_retries=max_retries,
             max_render_retries=max(1, max_retries - 1),
+            on_complete=on_complete,
         )
     )
 
@@ -71,6 +73,7 @@ async def submit_job(
 
 async def _run_job(
     job: JobState,
+    on_complete=None,
     **kwargs,
 ) -> None:
     """Execute agent workflow in background with semaphore control."""
@@ -100,6 +103,12 @@ async def _run_job(
     finally:
         job._event.set()
         job.notify_listeners()
+        # Call on_complete callback if provided
+        if on_complete and job.status == "complete" and job.code:
+            try:
+                on_complete(job.job_id, job.code)
+            except Exception as e:
+                log.warning("on_complete callback failed: %s", e)
 
 
 def get_job(job_id: str) -> JobState | None:

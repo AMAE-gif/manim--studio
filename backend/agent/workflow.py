@@ -11,12 +11,14 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from .models import AnimationRules, LlmConfig, VisionLlmConfig
-from .prompts import build_system_prompt, TEACHER_SOLVE_PROMPT, TEACHER_REFINE_PROMPT, TEACHER_TO_MANIM_PROMPT, TEACHER_DIRECT_PROMPT
+from .prompts import build_system_prompt, TEACHER_SOLVE_PROMPT, TEACHER_REFINE_PROMPT, TEACHER_TO_MANIM_PROMPT, TEACHER_DIRECT_PROMPT, _TEACHER_STYLE_RULES
 from .tools import (
     extract_code_from_response,
     render_animation,
     validate_syntax,
     check_manim_imports,
+    check_chinese_in_mathtex,
+    fix_chinese_in_mathtex,
     WORKDIR,
 )
 from .vision import extract_math_problem
@@ -59,21 +61,27 @@ async def _llm_chat(
         )
         # Find TextBlock, skip ThinkingBlock — log thinking usage
         text_parts = []
-        thinking_chars = 0
+        thinking_parts = []
         for block in response.content:
             block_text = getattr(block, "text", None)
             block_type = getattr(block, "type", "unknown")
             if block_type == "thinking":
-                thinking_chars += len(block_text or "")
+                thinking_parts.append(block_text or "")
             elif block_text is not None:
                 text_parts.append(block_text)
-        if thinking_chars > 0:
-            log.info("Anthropic thinking block: %d chars, text blocks: %d", thinking_chars, sum(len(p) for p in text_parts))
+        if thinking_parts:
+            log.info("Anthropic thinking block: %d chars, text blocks: %d", sum(len(p) for p in thinking_parts), sum(len(p) for p in text_parts))
         if text_parts:
             return "\n".join(text_parts)
+        # Fallback: if no text block but thinking block exists, use thinking content
+        # (some models put the actual response in thinking when max_tokens is tight)
+        if thinking_parts:
+            fallback = "\n".join(thinking_parts)
+            log.warning("No text block found, falling back to thinking block content (%d chars)", len(fallback))
+            return fallback
         # Check if response was truncated
         if response.stop_reason == "max_tokens":
-            log.warning("Anthropic response truncated (max_tokens=%d). Thinking used %d chars.", max_tokens, thinking_chars)
+            log.warning("Anthropic response truncated (max_tokens=%d). No text or thinking content.", max_tokens)
         # No text found — log and raise
         block_types = [getattr(block, "type", type(block).__name__) for block in response.content]
         log.error("Anthropic response has no TextBlock. Block types: %s", block_types)
@@ -143,6 +151,7 @@ async def run_agent_workflow(
                 base_url=base_url,
                 api_format=api_format,
                 temperature=0.3,
+                max_tokens=8192,
             )
         except Exception as e:
             err_msg = str(e)
@@ -188,6 +197,13 @@ async def run_agent_workflow(
 
     # Save code to job dir
     script_path = job_dir / "scene.py"
+
+    # Check and fix Chinese characters in MathTex/Tex
+    chinese_check = check_chinese_in_mathtex(code)
+    if not chinese_check["valid"]:
+        log.warning("Found Chinese in MathTex, auto-fixing: %s", chinese_check["issues"])
+        code = fix_chinese_in_mathtex(code)
+
     script_path.write_text(code, encoding="utf-8")
 
     # RENDER (background, non-blocking for the user)
@@ -425,7 +441,7 @@ async def run_teacher_workflow(
         # Phase 2: SOLVE
         yield _event("solve", "正在分析解题步骤...")
 
-        solve_msg = TEACHER_SOLVE_PROMPT.format(problem_text=problem_text)
+        solve_msg = TEACHER_SOLVE_PROMPT.format(problem_text=problem_text, _teacher_style_rules=_TEACHER_STYLE_RULES)
         messages = [
             {"role": "system", "content": "你是一个数学解题专家。只输出 JSON。"},
             {"role": "user", "content": solve_msg},
@@ -467,11 +483,12 @@ async def run_teacher_workflow(
     yield _event("generate", "正在生成 Manim 动画代码...")
 
     if phase == "direct" or not solution_data:
-        gen_prompt = TEACHER_DIRECT_PROMPT.format(problem_text=problem_text)
+        gen_prompt = TEACHER_DIRECT_PROMPT.format(problem_text=problem_text, _teacher_style_rules=_TEACHER_STYLE_RULES)
     else:
         gen_prompt = TEACHER_TO_MANIM_PROMPT.format(
             problem_text=problem_text,
             solution_json=json.dumps(solution_data, ensure_ascii=False, indent=2),
+            _teacher_style_rules=_TEACHER_STYLE_RULES,
         )
 
     system_prompt = build_system_prompt(rules=rules, style_analysis=style_analysis)
@@ -485,6 +502,7 @@ async def run_teacher_workflow(
         raw_content = await _llm_chat(
             messages=gen_messages, model=model, api_key=api_key,
             base_url=base_url, api_format=api_format, temperature=0.3,
+            max_tokens=8192,
         )
     except Exception as e:
         err_msg = str(e)
@@ -546,6 +564,13 @@ async def run_teacher_workflow(
 
     # Save code
     script_path = job_dir / "scene.py"
+
+    # Check and fix Chinese characters in MathTex/Tex
+    chinese_check = check_chinese_in_mathtex(code)
+    if not chinese_check["valid"]:
+        log.warning("Found Chinese in MathTex, auto-fixing: %s", chinese_check["issues"])
+        code = fix_chinese_in_mathtex(code)
+
     script_path.write_text(code, encoding="utf-8")
 
     # ── Done: return code, user clicks "生成动画" to render separately ──

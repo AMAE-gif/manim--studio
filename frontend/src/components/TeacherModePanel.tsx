@@ -7,6 +7,8 @@ import { AgentProgress } from "./AgentProgress";
 import type { AgentState } from "@/lib/agent-store";
 import type { LlmConfig } from "./SettingsDialog";
 
+export type RenderQuality = "ql" | "qm" | "qh";
+
 interface TeacherModePanelProps {
   prompt: string;
   onPromptChange: (v: string) => void;
@@ -16,7 +18,7 @@ interface TeacherModePanelProps {
   onAnalyze: (file: File) => void;
   onSolve: () => void;
   onRefine: (instruction: string, stepIndex: number | null) => void;
-  onRender: () => void;
+  onRender: (quality: RenderQuality) => void;
   busy: boolean;
 }
 
@@ -36,6 +38,7 @@ export function TeacherModePanel({
   const [file, setFile] = useState<File | null>(null);
   const [refinement, setRefinement] = useState("");
   const [modifyStepIndex, setModifyStepIndex] = useState<number | null>(null);
+  const [quality, setQuality] = useState<RenderQuality>("ql");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const isRunning = agentState.status !== "idle" && agentState.status !== "complete" && agentState.status !== "error";
@@ -241,7 +244,7 @@ export function TeacherModePanel({
               应用修改
             </Button>
             <Button
-              onClick={onRender}
+              onClick={() => onRender(quality)}
               disabled={busy || !agentState.validationPassed}
               className="flex-1 h-10 text-[14px] font-semibold"
             >
@@ -251,6 +254,31 @@ export function TeacherModePanel({
           </>
         )}
       </div>
+
+      {/* Render Quality Toggle */}
+      {hasCode && !isRunning && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-white/30 mr-1">画质：</span>
+          {([
+            { key: "ql" as const, label: "预览", desc: "480p" },
+            { key: "qm" as const, label: "标清", desc: "720p" },
+            { key: "qh" as const, label: "高清", desc: "1080p" },
+          ]).map((q) => (
+            <button
+              key={q.key}
+              onClick={() => setQuality(q.key)}
+              className={`px-2.5 py-1 rounded-md text-[11px] transition-all duration-200 ${
+                quality === q.key
+                  ? "bg-white/15 text-white/80 border border-white/20"
+                  : "bg-white/[0.04] text-white/30 border border-white/[0.06] hover:bg-white/[0.08] hover:text-white/50"
+              }`}
+            >
+              {q.label}
+              <span className="ml-1 opacity-50">{q.desc}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Refinement History */}
       {agentState.refinementHistory.length > 0 && (
