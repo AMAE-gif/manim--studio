@@ -44,12 +44,9 @@ def _fetch_jwks(supabase_url: str) -> list[dict]:
 
 
 def _verify_es256(token: str, jwks: list[dict]) -> dict | None:
+    """Verify ES256 JWT using PyJWT's built-in cryptography backend."""
     try:
-        from cryptography.hazmat.primitives.asymmetric.ec import (
-            SECP256R1, EllipticCurvePublicNumbers, ECDSA,
-        )
-        from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
-        from cryptography.hazmat.primitives.hashes import SHA256
+        from jwt.algorithms import ECAlgorithm
     except ImportError:
         _log.error("cryptography package not installed — cannot verify ES256")
         return None
@@ -61,30 +58,13 @@ def _verify_es256(token: str, jwks: list[dict]) -> dict | None:
         if jwk.get("kid") != kid:
             continue
         try:
-            import base64 as _b64
-            def _b64url_decode(s: str) -> bytes:
-                s += "=" * (4 - len(s) % 4)
-                return _b64.urlsafe_b64decode(s)
-
-            x = int.from_bytes(_b64url_decode(jwk["x"]), "big")
-            y = int.from_bytes(_b64url_decode(jwk["y"]), "big")
-            pub_key = EllipticCurvePublicNumbers(x, y, SECP256R1()).public_key()
-
-            parts = token.split(".")
-            signing_input = f"{parts[0]}.{parts[1]}".encode()
-            raw_sig = _b64url_decode(parts[2])
-
-            # JOSE uses raw (r||s) signature; cryptography expects DER-encoded
-            half = len(raw_sig) // 2
-            r = int.from_bytes(raw_sig[:half], "big")
-            s = int.from_bytes(raw_sig[half:], "big")
-            der_sig = encode_dss_signature(r, s)
-
-            pub_key.verify(der_sig, signing_input, ECDSA(SHA256()))
-
-            payload = json.loads(_b64url_decode(parts[1]))
-            _log.info("ES256 verified via cryptography, sub=%s", payload.get("sub"))
+            pub_key = ECAlgorithm.from_jwk(jwk)
+            payload = jwt.decode(token, pub_key, algorithms=["ES256"], options={"verify_aud": False})
+            _log.info("ES256 verified via PyJWT, sub=%s", payload.get("sub"))
             return payload
+        except jwt.ExpiredSignatureError:
+            _log.warning("ES256 token expired (kid=%s)", kid)
+            return None
         except Exception as e:
             _log.error("ES256 verification failed (kid=%s): %s — %s", kid, type(e).__name__, e)
             return None
