@@ -686,29 +686,34 @@ def debug_env():
 
 @app.get("/api/debug-jwt")
 def debug_jwt(authorization: str | None = Header(default=None)):
-    """Debug: decode JWT and show result (temporarily)."""
+    """Debug: decode JWT using the actual auth path."""
     from supabase_sync import parse_bearer_header, decode_user_id_from_jwt
-    import logging
-    log = logging.getLogger("debug-jwt")
 
     token = parse_bearer_header(authorization)
     if not token:
-        return {"has_token": False, "error": "No Bearer token in Authorization header"}
+        return {"has_token": False, "error": "No Bearer token"}
 
-    secret = (os.environ.get("SUPABASE_JWT_SECRET") or "").strip()
-    log.info("DEBUG JWT: token length=%d, secret length=%d, token_prefix=%s", len(token), len(secret), token[:20])
-
+    # Test cryptography availability
+    crypto_ok = False
+    crypto_err = None
     try:
-        import jwt as pyjwt
-        payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
-        sub = payload.get("sub")
-        return {"has_token": True, "decoded": True, "sub": sub, "role": payload.get("role"), "iss": payload.get("iss")}
-    except pyjwt.ExpiredSignatureError:
-        return {"has_token": True, "decoded": False, "error": "Token expired"}
-    except pyjwt.InvalidSignatureError:
-        return {"has_token": True, "decoded": False, "error": "Signature mismatch — JWT secret doesn't match signing key"}
+        from jwt.algorithms import ECAlgorithm
+        crypto_ok = True
     except Exception as e:
-        return {"has_token": True, "decoded": False, "error": f"{type(e).__name__}: {e}"}
+        crypto_err = f"{type(e).__name__}: {e}"
+
+    # Decode using the real auth path
+    uid = decode_user_id_from_jwt(token)
+    header = __import__("jwt").get_unverified_header(token)
+
+    return {
+        "has_token": True,
+        "alg": header.get("alg"),
+        "kid": header.get("kid"),
+        "crypto_importable": crypto_ok,
+        "crypto_error": crypto_err,
+        "decoded_user_id": str(uid) if uid else None,
+    }
 
 
 @app.post("/api/debug-llm")
