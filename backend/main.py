@@ -687,33 +687,60 @@ def debug_env():
 @app.get("/api/debug-jwt")
 def debug_jwt(authorization: str | None = Header(default=None)):
     """Debug: decode JWT using the actual auth path."""
-    from supabase_sync import parse_bearer_header, decode_user_id_from_jwt
+    from supabase_sync import parse_bearer_header, _fetch_jwks, _verify_es256
+    import jwt as pyjwt
 
     token = parse_bearer_header(authorization)
     if not token:
         return {"has_token": False, "error": "No Bearer token"}
 
-    # Test cryptography availability
-    crypto_ok = False
-    crypto_err = None
-    try:
-        from jwt.algorithms import ECAlgorithm
-        crypto_ok = True
-    except Exception as e:
-        crypto_err = f"{type(e).__name__}: {e}"
+    header = pyjwt.get_unverified_header(token)
+    alg = header.get("alg", "")
+    kid = header.get("kid", "")
+    supabase_url = (os.environ.get("SUPABASE_URL") or "").strip()
 
-    # Decode using the real auth path
-    uid = decode_user_id_from_jwt(token)
-    header = __import__("jwt").get_unverified_header(token)
-
-    return {
+    result = {
         "has_token": True,
-        "alg": header.get("alg"),
-        "kid": header.get("kid"),
-        "crypto_importable": crypto_ok,
-        "crypto_error": crypto_err,
-        "decoded_user_id": str(uid) if uid else None,
+        "alg": alg,
+        "kid": kid,
+        "supabase_url": supabase_url,
     }
+
+    if alg == "ES256":
+        # Test JWK fetching
+        jwks = _fetch_jwks(supabase_url)
+        result["jwks_count"] = len(jwks)
+        result["jwk_kids"] = [k.get("kid") for k in jwks]
+
+        if not jwks:
+            result["error"] = "No JWKs fetched — network or URL issue"
+        else:
+            # Test ECAlgorithm import
+            try:
+                from jwt.algorithms import ECAlgorithm
+                result["crypto_importable"] = True
+            except Exception as e:
+                result["crypto_importable"] = False
+                result["crypto_error"] = f"{type(e).__name__}: {e}"
+                return result
+
+            # Test actual verify
+            payload = _verify_es256(token, jwks)
+            if payload:
+                result["decoded_user_id"] = payload.get("sub")
+            else:
+                result["error"] = "_verify_es256 returned None (kid mismatch or signature fail)"
+    elif alg == "HS256":
+        secret = (os.environ.get("SUPABASE_JWT_SECRET") or "").strip()
+        try:
+            payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
+            result["decoded_user_id"] = payload.get("sub")
+        except Exception as e:
+            result["error"] = f"{type(e).__name__}: {e}"
+    else:
+        result["error"] = f"Unsupported alg: {alg}"
+
+    return result
 
 
 @app.post("/api/debug-llm")
