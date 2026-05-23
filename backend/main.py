@@ -8,6 +8,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 import re
 import shutil
 import time
@@ -26,15 +29,18 @@ from agent import analyze_image_style, run_agent_workflow, run_teacher_workflow,
 from agent.models import AgentGenerateBody, VisionLlmConfig, TeacherModeSubmit
 
 from supabase_sync import (
+    create_draft_project,
     decode_user_id_from_jwt,
     get_project_for_user,
     get_supabase_admin,
+    get_user_settings,
     insert_project,
     list_user_projects,
     parse_bearer_header,
     public_object_url,
     update_project_code,
     update_project_rendered,
+    upsert_user_settings,
     upload_render_mp4,
 )
 
@@ -197,7 +203,7 @@ async def api_generate(
     body: GenerateBody,
     user_id: UUID | None = Depends(get_optional_user),
 ):
-    from agent.tools import validate_syntax, check_manim_imports, render_animation
+    from agent.tools import validate_syntax, check_manim_imports, render_animation, check_chinese_in_mathtex, fix_chinese_in_mathtex
     from agent.workflow import _llm_chat
 
     api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
@@ -254,6 +260,12 @@ async def api_generate(
     if not syntax["passed"] or not imports["valid"]:
         error = syntax.get("error") or str(imports.get("checks", {}))
         raise HTTPException(status_code=422, detail=f"代码语法错误（自动修复失败）: {error}")
+
+    # Check and fix Chinese characters in MathTex/Tex
+    chinese_check = check_chinese_in_mathtex(code)
+    if not chinese_check["valid"]:
+        log.warning("Found Chinese in MathTex, auto-fixing: %s", chinese_check["issues"])
+        code = fix_chinese_in_mathtex(code)
 
     script_path.write_text(code, encoding="utf-8")
 
@@ -315,6 +327,7 @@ class RenderBody(BaseModel):
     job_id: str
     code: str | None = None
     llm: LlmConfig | None = None
+    quality: str = "ql"  # "ql" (480p), "qm" (720p), "qh" (1080p)
 
 
 @app.post("/api/render")
@@ -329,7 +342,7 @@ async def api_render(
         return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
 
     async def _stream():
-        from agent.tools import render_animation
+        from agent.tools import render_animation, check_chinese_in_mathtex, fix_chinese_in_mathtex
         from agent.workflow import _llm_chat
 
         log.info("=== api_render CALLED job_id=%s ===", body.job_id)
@@ -350,6 +363,13 @@ async def api_render(
 
             code = script_path.read_text(encoding="utf-8")
 
+            # Check and fix Chinese characters in MathTex/Tex
+            chinese_check = check_chinese_in_mathtex(code)
+            if not chinese_check["valid"]:
+                log.warning("Found Chinese in MathTex, auto-fixing: %s", chinese_check["issues"])
+                code = fix_chinese_in_mathtex(code)
+                script_path.write_text(code, encoding="utf-8")
+
             api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
             base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
             model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -365,7 +385,7 @@ async def api_render(
             result = None
             for attempt in range(3):
                 yield _sse("step_start", {"step": "render", "message": f"渲染中（第 {attempt+1} 次）..."})
-                result = await render_animation(code, body.job_id)
+                result = await render_animation(code, body.job_id, quality=body.quality)
                 if result["passed"]:
                     yield _sse("step_end", {"step": "render", "passed": True})
                     break
@@ -446,6 +466,74 @@ async def api_render(
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
+class FixCodeBody(BaseModel):
+    code: str
+    issue: str
+    llm: LlmConfig | None = None
+
+
+@app.post("/api/fix-code")
+async def api_fix_code(body: FixCodeBody):
+    """Fix Manim code based on a natural language issue description. Returns SSE stream."""
+    import json as _json
+
+    def _sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+    async def _stream():
+        from agent.prompts import CODE_FIX_PROMPT
+        from agent.workflow import _llm_chat
+        from agent.tools import extract_code_from_response, validate_syntax, check_manim_imports, check_chinese_in_mathtex, fix_chinese_in_mathtex
+
+        api_key = (body.llm.api_key if body.llm and body.llm.api_key else None) or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            yield _sse("error", {"message": "未配置 API Key"})
+            return
+
+        base_url = (body.llm.base_url if body.llm and body.llm.base_url else None) or os.environ.get("OPENAI_BASE_URL")
+        model = (body.llm.model if body.llm and body.llm.model else None) or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        api_format = (body.llm.api_format if body.llm and body.llm.api_format else "openai")
+
+        yield _sse("step_start", {"step": "fix", "message": "正在分析问题并修复代码..."})
+
+        prompt = CODE_FIX_PROMPT.format(code=body.code, issue=body.issue)
+        messages = [
+            {"role": "system", "content": "你是 Manim 代码修复专家。只输出纯 Python 代码。"},
+            {"role": "user", "content": prompt},
+        ]
+
+        try:
+            raw = await _llm_chat(
+                messages=messages, model=model, api_key=api_key,
+                base_url=base_url, api_format=api_format,
+                temperature=0.2, max_tokens=8192,
+            )
+        except Exception as e:
+            yield _sse("error", {"message": f"LLM 调用失败: {e}"})
+            return
+
+        code = extract_code_from_response(raw)
+
+        # Check and fix Chinese in MathTex
+        chinese_check = check_chinese_in_mathtex(code)
+        if not chinese_check["valid"]:
+            log.warning("Fix-code: found Chinese in MathTex, auto-fixing")
+            code = fix_chinese_in_mathtex(code)
+
+        # Validate syntax
+        syntax = validate_syntax(code)
+        imports = check_manim_imports(code)
+
+        if not syntax["passed"]:
+            yield _sse("error", {"message": f"修复后的代码有语法错误: {syntax.get('error')}"})
+            return
+
+        yield _sse("step_end", {"step": "fix", "passed": True})
+        yield _sse("complete", {"code": code})
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
 @app.get("/api/video/{job_id}")
 def api_video(job_id: str):
     job_dir = WORKDIR / job_id
@@ -517,6 +605,39 @@ def api_delete_project(job_id: str, user_id: UUID = Depends(get_required_user)):
     return {"ok": True}
 
 
+class CreateProjectBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=500)
+
+
+@app.post("/api/project")
+def api_create_project(body: CreateProjectBody, user_id: UUID = Depends(get_required_user)):
+    sb = get_supabase_admin()
+    if sb is None:
+        raise HTTPException(status_code=503, detail="服务器未配置 Supabase Service Role")
+    return create_draft_project(sb, user_id=user_id, name=body.name)
+
+
+class SettingsBody(BaseModel):
+    settings: dict
+
+
+@app.get("/api/settings")
+def api_get_settings(user_id: UUID = Depends(get_required_user)):
+    sb = get_supabase_admin()
+    if sb is None:
+        raise HTTPException(status_code=503, detail="服务器未配置 Supabase Service Role")
+    return {"settings": get_user_settings(sb, user_id)}
+
+
+@app.put("/api/settings")
+def api_put_settings(body: SettingsBody, user_id: UUID = Depends(get_required_user)):
+    sb = get_supabase_admin()
+    if sb is None:
+        raise HTTPException(status_code=503, detail="服务器未配置 Supabase Service Role")
+    upsert_user_settings(sb, user_id, body.settings)
+    return {"ok": True}
+
+
 @app.on_event("startup")
 async def log_cors_origins():
     log.info("CORS allowed origins: %s", _allowed_cors_origins())
@@ -547,9 +668,7 @@ def api_config():
     """Return public config for the frontend (Supabase URL + anon key)."""
     url = os.environ.get("SUPABASE_URL", "")
     anon = os.environ.get("SUPABASE_ANON_KEY", "")
-    # Fallback: if anon key not set, use service role key (works but not recommended)
-    if not anon:
-        anon = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    log.info("/api/config - SUPABASE_URL set: %s, ANON_KEY set: %s", bool(url), bool(anon))
     return {
         "supabase_url": url,
         "supabase_anon_key": anon,
@@ -683,17 +802,27 @@ async def api_analyze_style(
 
 
 @app.post("/api/agent/submit")
-async def api_agent_submit(body: AgentGenerateBody):
+async def api_agent_submit(body: AgentGenerateBody, user_id: UUID | None = Depends(get_optional_user)):
     """Submit an agent job to the queue. Returns job_id immediately."""
     from agent.models import LlmConfig
 
     llm = body.llm
+
+    def _on_complete(jid: str, code: str):
+        sb = get_supabase_admin()
+        if sb and user_id:
+            try:
+                insert_project(sb, user_id=user_id, job_id=jid, prompt=body.prompt, code=code)
+            except Exception as e:
+                log.warning("Agent insert_project 失败: %s", e)
+
     job_id, pending = await submit_job(
         prompt=body.prompt,
         llm_config=llm,
         style_analysis=body.style_analysis,
         rules=body.rules,
         max_retries=body.max_retries,
+        on_complete=_on_complete if user_id else None,
     )
     return {
         "job_id": job_id,
@@ -821,13 +950,14 @@ async def api_teacher_analyze(
 
 
 @app.post("/api/teacher/submit")
-async def api_teacher_submit(body: TeacherModeSubmit):
+async def api_teacher_submit(body: TeacherModeSubmit, user_id: UUID | None = Depends(get_optional_user)):
     """Submit teacher mode job (solve + generate or refine + generate)."""
     from agent.models import LlmConfig, AnimationRules
 
-    log.info("Teacher submit - llm: %s, vision_llm: %s",
+    log.info("Teacher submit - llm: %s, vision_llm: %s, user_id: %s",
              f"api_key={'yes' if body.llm and body.llm.api_key else 'no'}, model={body.llm.model if body.llm else None}",
-             f"api_key={'yes' if body.vision_llm and body.vision_llm.api_key else 'no'}, model={body.vision_llm.model if body.vision_llm else None}")
+             f"api_key={'yes' if body.vision_llm and body.vision_llm.api_key else 'no'}, model={body.vision_llm.model if body.vision_llm else None}",
+             user_id)
 
     job_id, pending = await submit_teacher_job(
         image_base64=body.image_base64,
@@ -841,6 +971,7 @@ async def api_teacher_submit(body: TeacherModeSubmit):
         refinement=body.refinement,
         step_index=body.step_index,
         phase=body.phase,
+        user_id=user_id,
     )
     return {
         "job_id": job_id,
@@ -861,6 +992,7 @@ async def submit_teacher_job(
     refinement: str | None = None,
     step_index: int | None = None,
     phase: str = "direct",
+    user_id=None,
 ) -> tuple[str, int]:
     """Submit a teacher workflow job to the queue."""
     import asyncio as _asyncio
@@ -895,13 +1027,21 @@ async def submit_teacher_job(
                     job.code = event["data"].get("code")
                     job.video_url = event["data"].get("video_url")
                     job.status = "complete"
+                    # Save project to Supabase if user is logged in
+                    if user_id and job.code:
+                        sb = get_supabase_admin()
+                        if sb:
+                            try:
+                                insert_project(sb, user_id=user_id, job_id=job_id, prompt=prompt or "教师模式", code=job.code)
+                            except Exception as e:
+                                log.warning("Teacher insert_project 失败: %s", e)
                 elif event["event"] == "error":
                     job.error = event["data"].get("message")
                     job.status = "error"
                 # Notify SSE listeners
                 for listener in job._listeners:
                     listener.set()
-            job.result_event.set()
+            job._event.set()
 
     _asyncio.create_task(_run())
     return job_id, pending

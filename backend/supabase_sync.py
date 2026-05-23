@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid as _uuid
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -135,3 +136,41 @@ def list_user_projects(sb: Client, user_id: UUID, limit: int = 50) -> list[dict[
             row = {**row, "video_url": public_object_url(path)}
         out.append(row)
     return out
+
+
+def get_user_settings(sb: Client, user_id: UUID) -> dict[str, Any] | None:
+    res = (
+        sb.table("user_settings")
+        .select("settings_json")
+        .eq("user_id", str(user_id))
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    if not rows:
+        return None
+    return rows[0].get("settings_json")
+
+
+def upsert_user_settings(sb: Client, user_id: UUID, settings_json: dict[str, Any]) -> None:
+    sb.table("user_settings").upsert(
+        {
+            "user_id": str(user_id),
+            "settings_json": settings_json,
+        },
+        on_conflict="user_id",
+    ).execute()
+
+
+def create_draft_project(sb: Client, *, user_id: UUID, name: str) -> dict[str, Any]:
+    job_id = str(_uuid.uuid4())
+    sb.table("manim_projects").insert(
+        {
+            "user_id": str(user_id),
+            "job_id": job_id,
+            "prompt": name,
+            "code": "",
+            "status": "draft",
+        }
+    ).execute()
+    return {"job_id": job_id, "prompt": name, "status": "draft"}

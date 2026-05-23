@@ -10,6 +10,7 @@ import {
   DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { apiFetch } from "@/lib/api";
 
 export interface LlmConfig {
   apiKey: string;
@@ -148,9 +149,10 @@ export function resolveVisionConfig(code: LlmConfig, vision: VisionConfig): { ap
 interface SettingsDialogProps {
   onConfigChange?: (config: LlmConfig) => void;
   onVisionChange?: (config: VisionConfig) => void;
+  accessToken?: string | null;
 }
 
-export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialogProps) {
+export function SettingsDialog({ onConfigChange, onVisionChange, accessToken }: SettingsDialogProps) {
   const [settings, setSettings] = useState<SettingsState>(loadSettings);
   const [open, setOpen] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
@@ -161,6 +163,38 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
     onConfigChange?.(getLlmConfig(settings));
     onVisionChange?.(settings.vision);
   }, []);
+
+  // Load settings from cloud when user logs in
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiFetch("/api/settings", { method: "GET" }, accessToken);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (cancelled || !data.settings) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let remote = data.settings as any;
+        // Apply migrations (same as loadSettings)
+        if (remote.providers) {
+          remote.providers = remote.providers.map((p: any) => ({
+            ...p,
+            apiFormat: p.apiFormat || "openai",
+          }));
+        }
+        if (remote.vision && !remote.vision.apiFormat) {
+          remote.vision.apiFormat = "openai";
+        }
+        setSettings(remote);
+        saveSettings(remote);
+        const llm = getLlmConfig(remote);
+        onConfigChange?.(llm);
+        onVisionChange?.(remote.vision);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [accessToken]);
 
   const update = (patch: Partial<SettingsState>) => {
     const next = { ...settings, ...patch };
@@ -246,12 +280,20 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const llm = getLlmConfig(settings);
     saveSettings(settings);
     onConfigChange?.(llm);
     onVisionChange?.(settings.vision);
     setOpen(false);
+    if (accessToken) {
+      try {
+        await apiFetch("/api/settings", {
+          method: "PUT",
+          body: JSON.stringify({ settings }),
+        }, accessToken);
+      } catch { /* localStorage is the fallback */ }
+    }
   };
 
   const activeProvider = getActiveProvider(settings);
@@ -489,7 +531,7 @@ export function SettingsDialog({ onConfigChange, onVisionChange }: SettingsDialo
           <Button onClick={handleSave}>保存</Button>
         </DialogFooter>
         <p className="text-[11px] text-white/20">
-          配置仅保存在浏览器本地，不会上传到任何服务器。
+          {accessToken ? "配置已同步到云端账户，同时保存在浏览器本地。" : "配置仅保存在浏览器本地。登录后可同步到云端。"}
         </p>
       </DialogContent>
     </Dialog>

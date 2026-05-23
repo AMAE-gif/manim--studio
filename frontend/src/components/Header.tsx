@@ -9,6 +9,7 @@ interface HeaderProps {
   onVisionChange: (config: VisionConfig) => void;
   mode: "simple" | "agent" | "teacher";
   onModeChange: (v: "simple" | "agent" | "teacher") => void;
+  accessToken?: string | null;
 }
 
 const modes = [
@@ -17,7 +18,7 @@ const modes = [
   { key: "teacher" as const, label: "教师", icon: GraduationCap },
 ];
 
-export function Header({ health, onLlmConfigChange, onVisionChange, mode, onModeChange }: HeaderProps) {
+export function Header({ health, onLlmConfigChange, onVisionChange, mode, onModeChange, accessToken }: HeaderProps) {
   return (
     <header className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] glass">
       <div className="flex items-center gap-3">
@@ -52,7 +53,7 @@ export function Header({ health, onLlmConfigChange, onVisionChange, mode, onMode
             <span className="text-[11px] text-white/40">Manim</span>
           </div>
         )}
-        <SettingsDialog onConfigChange={onLlmConfigChange} onVisionChange={onVisionChange} />
+        <SettingsDialog onConfigChange={onLlmConfigChange} onVisionChange={onVisionChange} accessToken={accessToken} />
       </div>
     </header>
   );

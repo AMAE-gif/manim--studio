@@ -13,8 +13,10 @@ import { Sidebar } from "./components/Sidebar";
 import { PromptPanel } from "./components/PromptPanel";
 import { AgentPanel } from "./components/AgentPanel";
 import { TeacherModePanel } from "./components/TeacherModePanel";
+import type { RenderQuality } from "./components/TeacherModePanel";
 import { CodeEditor } from "./components/CodeEditor";
 import { VideoPreview } from "./components/VideoPreview";
+import { CodeFixPanel } from "./components/CodeFixPanel";
 import { StatusBar } from "./components/StatusBar";
 import { loadLlmConfig, resolveVisionConfig } from "./components/SettingsDialog";
 import type { LlmConfig, VisionConfig } from "./components/SettingsDialog";
@@ -286,9 +288,9 @@ export default function App() {
           setCode(data.code);
           if (data.video_url) {
             setVideoUrl(resolveMediaUrl(data.video_url, Date.now()));
-            setStatus("代码已生成并通过渲染验证，动画已就绪。");
+            setStatus("动画已就绪。");
           } else {
-            setStatus("代码已生成，但预渲染失败。请检查代码后手动渲染。");
+            setStatus("代码已生成，请审查后点击「生成动画」渲染视频。");
           }
         },
         onError: (data) => {
@@ -359,7 +361,11 @@ export default function App() {
         },
         onComplete: (data) => {
           agentDispatch({ type: "COMPLETE", code: data.code, videoUrl: data.video_url, jobId: data.job_id });
-          setStatus("修改已应用，动画已重新生成。");
+          if (data.session_id) {
+            agentDispatch({ type: "SET_SESSION_ID", sessionId: data.session_id });
+          }
+          setCode(data.code);
+          setStatus("修改已应用，代码已更新。请审查后点击「生成动画」。");
         },
         onError: (data) => {
           agentDispatch({ type: "ERROR", message: data.message });
@@ -514,7 +520,7 @@ export default function App() {
 
   const onGenerate = mode === "agent" ? onAgentGenerate : mode === "teacher" ? onAgentGenerate : onSimpleGenerate;
 
-  const onRender = async () => {
+  const onRender = async (quality: RenderQuality = "ql") => {
     if (!jobId) {
       setStatus("请先生成代码。");
       return;
@@ -536,6 +542,7 @@ export default function App() {
           llm: llmConfig.apiKey
             ? { api_key: llmConfig.apiKey, base_url: llmConfig.baseUrl, model: llmConfig.model, api_format: llmConfig.apiFormat }
             : null,
+          quality,
         }),
       });
 
@@ -674,14 +681,41 @@ export default function App() {
     }
   };
 
-  const newProject = () => {
-    setPrompt("");
-    setCode("");
-    setJobId(null);
-    setVideoUrl(null);
-    setSelectedProjectId(null);
-    setStatus("");
-    agentDispatch({ type: "RESET" });
+  const newProject = async (name: string) => {
+    if (!token) {
+      setPrompt(name);
+      setCode("");
+      setJobId(null);
+      setVideoUrl(null);
+      setSelectedProjectId(null);
+      setStatus("");
+      agentDispatch({ type: "RESET" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await apiFetch("/api/project", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }, token);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setStatus(typeof data.detail === "string" ? data.detail : "创建项目失败");
+        return;
+      }
+      setPrompt(name);
+      setCode("");
+      setJobId(data.job_id);
+      setSelectedProjectId(data.job_id);
+      setVideoUrl(null);
+      setStatus("新项目已创建。");
+      agentDispatch({ type: "RESET" });
+      await loadProjects();
+    } catch (e) {
+      setStatus(`创建失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const resolvedVision = resolveVisionConfig(llmConfig, visionConfig);
@@ -700,6 +734,7 @@ export default function App() {
         onVisionChange={setVisionConfig}
         mode={mode}
         onModeChange={setMode}
+        accessToken={token}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -794,12 +829,24 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right: Video Preview */}
-            <div className="lg:w-1/2 p-4 overflow-auto">
-              <label className="text-xs font-medium text-muted-foreground mb-2 block">
-                预览
-              </label>
-              <VideoPreview videoUrl={videoUrl} />
+            {/* Right: Video Preview + Code Fix */}
+            <div className="lg:w-1/2 p-4 overflow-auto space-y-4">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                  预览
+                </label>
+                <VideoPreview videoUrl={videoUrl} />
+              </div>
+
+              {/* Code Fix Panel — teacher mode only, when code exists */}
+              {mode === "teacher" && code && (
+                <CodeFixPanel
+                  code={code}
+                  llmConfig={llmConfig}
+                  onCodeFixed={setCode}
+                  disabled={busy}
+                />
+              )}
             </div>
           </div>
 

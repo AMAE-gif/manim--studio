@@ -25,7 +25,7 @@ interface SidebarProps {
   projects: ProjectRow[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onNew: () => void;
+  onNew: (name: string) => void;
   onRename: (jobId: string, newPrompt: string) => void;
   onDelete: (jobId: string) => void;
   session: Session | null;
@@ -57,6 +57,8 @@ export function Sidebar({
 }: SidebarProps) {
   const [renameTarget, setRenameTarget] = useState<ProjectRow | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
 
   const openRename = (project: ProjectRow) => {
     setRenameTarget(project);
@@ -73,7 +75,7 @@ export function Sidebar({
   return (
     <aside className="flex flex-col h-full w-[280px] border-r border-border bg-surface">
       <div className="p-3 border-b border-border">
-        <Button variant="default" size="sm" className="w-full" onClick={onNew}>
+        <Button variant="default" size="sm" className="w-full" onClick={() => setNewProjectOpen(true)}>
           <Plus className="h-4 w-4 mr-1.5" />
           新建项目
         </Button>
@@ -158,6 +160,42 @@ export function Sidebar({
               取消
             </Button>
             <Button onClick={confirmRename}>保存</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>新建项目</DialogTitle>
+          </DialogHeader>
+          <Input
+            value={newProjectName}
+            onChange={(e) => setNewProjectName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newProjectName.trim()) {
+                onNew(newProjectName.trim());
+                setNewProjectName("");
+                setNewProjectOpen(false);
+              }
+            }}
+            placeholder="输入项目名称"
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setNewProjectOpen(false); setNewProjectName(""); }}>
+              取消
+            </Button>
+            <Button
+              disabled={!newProjectName.trim()}
+              onClick={() => {
+                onNew(newProjectName.trim());
+                setNewProjectName("");
+                setNewProjectOpen(false);
+              }}
+            >
+              创建
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
