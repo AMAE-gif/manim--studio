@@ -46,3 +46,26 @@ export async function apiFetch(
   }
   return fetch(apiPath(path), { ...init, headers });
 }
+
+/** Same as apiFetch but retries once with a refreshed token on 401. */
+export async function apiFetchWithRefresh(
+  path: string,
+  init: RequestInit = {},
+  accessToken?: string | null,
+  onRefresh?: (newToken: string) => void,
+): Promise<Response> {
+  let res = await apiFetch(path, init, accessToken);
+  if (res.status === 401 && accessToken && onRefresh) {
+    // Try to refresh the Supabase session
+    const { supabase } = await import("./supabase");
+    if (supabase) {
+      const { data } = await supabase.auth.refreshSession();
+      const newToken = data.session?.access_token;
+      if (newToken && newToken !== accessToken) {
+        onRefresh(newToken);
+        res = await apiFetch(path, init, newToken);
+      }
+    }
+  }
+  return res;
+}
