@@ -732,7 +732,8 @@ export default function App() {
         return;
       }
       // API failed — fallback to local mode so user can still work
-      console.warn("Cloud create failed, falling back to local:", data);
+      const errDetail = typeof data.detail === "string" ? data.detail : JSON.stringify(data);
+      console.warn("Cloud create failed:", r.status, errDetail);
       const localId = `local-${Date.now()}`;
       const localProject: ProjectRow = {
         job_id: localId,
@@ -746,7 +747,7 @@ export default function App() {
       setJobId(localId);
       setSelectedProjectId(localId);
       setVideoUrl(null);
-      setStatus("云端创建失败，已切换为本地模式。");
+      setStatus(`云端创建失败(${r.status}: ${errDetail})，已切换为本地模式。`);
       agentDispatch({ type: "RESET" });
     } catch (e) {
       // Network error — fallback to local
@@ -764,7 +765,7 @@ export default function App() {
       setJobId(localId);
       setSelectedProjectId(localId);
       setVideoUrl(null);
-      setStatus("网络错误，已切换为本地模式。");
+      setStatus(`网络错误(${e instanceof Error ? e.message : String(e)})，已切换为本地模式。`);
       agentDispatch({ type: "RESET" });
     } finally {
       setBusy(false);
