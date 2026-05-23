@@ -13,7 +13,6 @@ FROM python:3.11-slim
 # System deps: FFmpeg + minimal LaTeX + Cairo/Pango (for Text/Markup)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ \
-    libffi-dev libssl-dev \
     ffmpeg \
     texlive-latex-base texlive-latex-recommended \
     libcairo2-dev libpango1.0-dev pkg-config \
