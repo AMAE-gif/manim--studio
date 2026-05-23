@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { apiFetch, apiFetchWithRefresh, apiPath, resolveMediaUrl } from "./lib/api";
+import { apiFetch, apiPath, resolveMediaUrl } from "./lib/api";
 import { supabase, initSupabase } from "./lib/supabase";
 import type { Health, ProjectRow } from "./lib/types";
 import { submitAndStreamAgent, submitAndStreamTeacher } from "./lib/sse";
@@ -50,14 +50,6 @@ export default function App() {
 
   const token = session?.access_token ?? null;
 
-  // Called when apiFetchWithRefresh gets a new token via refreshSession
-  const handleTokenRefresh = useCallback((newToken: string) => {
-    setSession((prev) => {
-      if (!prev) return prev;
-      return { ...prev, access_token: newToken } as Session;
-    });
-  }, []);
-
   // Reset all state when switching modes so each mode is independent
   useEffect(() => {
     setCode("");
@@ -83,7 +75,7 @@ export default function App() {
       return;
     }
     try {
-      const r = await apiFetchWithRefresh("/api/projects", { method: "GET" }, token, handleTokenRefresh);
+      const r = await apiFetch("/api/projects", { method: "GET" }, token);
       const data = await r.json().catch(() => ({}));
       if (!r.ok) return;
       setProjects(Array.isArray(data.items) ? data.items : []);
@@ -102,16 +94,8 @@ export default function App() {
 
     void initSupabase().then(() => {
       if (!supabase) return;
-      void supabase.auth.getSession().then(async ({ data }) => {
-        const sess = data.session;
-        if (sess) {
-          // Try to refresh — if the access_token is expired and refresh_token
-          // is also dead, Supabase will fail and we clear the stale session.
-          const { data: refreshed } = await supabase!.auth.refreshSession();
-          setSession(refreshed.session ?? sess);
-        } else {
-          setSession(null);
-        }
+      void supabase.auth.getSession().then(({ data }) => {
+        setSession(data.session ?? null);
       });
       const { data } = supabase.auth.onAuthStateChange((_event, sess) => {
         setSession(sess);
@@ -642,11 +626,10 @@ export default function App() {
     setBusy(true);
     setStatus("正在载入云端项目...");
     try {
-      const r = await apiFetchWithRefresh(
+      const r = await apiFetch(
         `/api/project/${encodeURIComponent(id)}`,
         { method: "GET" },
-        token,
-        handleTokenRefresh
+        token
       );
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -730,10 +713,10 @@ export default function App() {
     }
     setBusy(true);
     try {
-      const r = await apiFetchWithRefresh("/api/project", {
+      const r = await apiFetch("/api/project", {
         method: "POST",
         body: JSON.stringify({ name }),
-      }, token, handleTokenRefresh);
+      }, token);
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         setStatus(typeof data.detail === "string" ? data.detail : "创建项目失败");
