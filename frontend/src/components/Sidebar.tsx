@@ -74,41 +74,68 @@ export function Sidebar({
 
   return (
     <aside className="flex flex-col h-full w-[280px] border-r border-border bg-surface">
-      <div className="p-3 border-b border-border">
-        <Button variant="default" size="sm" className="w-full" onClick={() => setNewProjectOpen(true)}>
-          <Plus className="h-4 w-4 mr-1.5" />
+      {/* New Project Button */}
+      <div className="p-4 pb-3">
+        <Button
+          variant="default"
+          size="sm"
+          className="w-full h-9 rounded-[10px] bg-white/[0.06] hover:bg-white/[0.1] text-white/80 hover:text-white border border-white/[0.06] font-medium text-[13px] transition-all duration-200"
+          onClick={() => setNewProjectOpen(true)}
+        >
+          <Plus className="h-4 w-4 mr-1.5 opacity-60" />
           新建项目
         </Button>
       </div>
 
+      {/* Project List */}
       <ScrollArea className="flex-1">
-        <div className="p-2 space-y-0.5">
+        <div className="px-3 pb-3 space-y-[3px]">
           {projects.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">
-              {session ? "暂无项目" : "登录后查看云端项目"}
-            </p>
+            <div className="flex flex-col items-center justify-center py-12 px-4">
+              <div className="w-10 h-10 rounded-full bg-white/[0.04] flex items-center justify-center mb-3">
+                <Plus className="h-5 w-5 text-white/20" />
+              </div>
+              <p className="text-[13px] text-white/25 text-center leading-relaxed">
+                {session ? "暂无项目" : "登录后查看云端项目"}
+              </p>
+            </div>
           ) : (
-            projects.map((p) => (
+            projects.map((p, index) => (
               <div
                 key={p.job_id}
-                className={`group flex items-start gap-2 px-2.5 py-2 rounded-md cursor-pointer transition-colors ${
+                className={`group relative flex items-start gap-2.5 px-3 py-2.5 rounded-[10px] cursor-pointer transition-all duration-200 animate-stagger-in ${
                   selectedId === p.job_id
-                    ? "bg-accent/10 border border-accent/20"
-                    : "hover:bg-surface-hover border border-transparent"
+                    ? "bg-white/[0.08] border border-white/[0.08]"
+                    : "hover:bg-white/[0.04] border border-transparent"
                 }`}
+                style={{ animationDelay: `${index * 30}ms` }}
                 onClick={() => onSelect(p.job_id)}
               >
+                {/* Selected indicator */}
+                {selectedId === p.job_id && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-blue-500" />
+                )}
+
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm truncate text-foreground">
+                  <p className={`text-[13px] truncate leading-snug ${selectedId === p.job_id ? "text-white/90" : "text-white/60"}`}>
                     {(p.prompt ?? "").slice(0, 36) || p.job_id}
                     {p.prompt && p.prompt.length > 36 ? "..." : ""}
                   </p>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <Badge variant="outline" className="text-[10px] px-1 py-0">
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <Badge
+                      variant="outline"
+                      className={`text-[9px] px-1.5 py-0 h-[16px] font-medium rounded-md ${
+                        p.status === "completed"
+                          ? "bg-emerald-500/10 text-emerald-400/80 border-emerald-500/20"
+                          : p.status === "error"
+                          ? "bg-red-500/10 text-red-400/80 border-red-500/20"
+                          : "bg-white/[0.04] text-white/35 border-white/[0.06]"
+                      }`}
+                    >
                       {p.status}
                     </Badge>
                     {p.created_at && (
-                      <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+                      <span className="text-[10px] text-white/25 flex items-center gap-1">
                         <Clock className="h-2.5 w-2.5" />
                         {timeAgo(p.created_at)}
                       </span>
@@ -117,21 +144,21 @@ export function Sidebar({
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger
-                    className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center justify-center rounded-md hover:bg-muted cursor-pointer border-none bg-transparent"
+                    className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center justify-center rounded-lg hover:bg-white/[0.06] cursor-pointer border-none bg-transparent"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <MoreHorizontal className="h-3.5 w-3.5" />
+                    <MoreHorizontal className="h-3.5 w-3.5 text-white/40" />
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
+                  <DropdownMenuContent align="end" className="min-w-[140px]">
                     <DropdownMenuItem onClick={() => openRename(p)}>
-                      <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                      <Pencil className="h-3.5 w-3.5 mr-2 opacity-60" />
                       重命名
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      className="text-destructive"
+                      className="text-red-400 focus:text-red-400"
                       onClick={() => onDelete(p.job_id)}
                     >
-                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                      <Trash2 className="h-3.5 w-3.5 mr-2 opacity-60" />
                       删除
                     </DropdownMenuItem>
                   </DropdownMenuContent>
@@ -142,8 +169,10 @@ export function Sidebar({
         </div>
       </ScrollArea>
 
+      {/* Auth Bar */}
       <AuthBar session={session} busy={busy} onStatusChange={onStatusChange} />
 
+      {/* Rename Dialog */}
       <Dialog open={!!renameTarget} onOpenChange={() => setRenameTarget(null)}>
         <DialogContent>
           <DialogHeader>
@@ -164,6 +193,7 @@ export function Sidebar({
         </DialogContent>
       </Dialog>
 
+      {/* New Project Dialog */}
       <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
         <DialogContent>
           <DialogHeader>

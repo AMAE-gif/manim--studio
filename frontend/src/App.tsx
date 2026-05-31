@@ -794,10 +794,10 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar toggle for small screens */}
         <button
-          className="lg:hidden fixed top-14 left-2 z-50 bg-surface border border-border rounded-md p-1.5"
+          className="lg:hidden fixed top-[60px] left-3 z-50 bg-surface border border-border rounded-[10px] p-2 shadow-apple"
           onClick={() => setSidebarOpen(!sidebarOpen)}
         >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="h-4 w-4 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
@@ -806,7 +806,7 @@ export default function App() {
         <div
           className={`${
             sidebarOpen ? "translate-x-0" : "-translate-x-full"
-          } lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-40 transition-transform`}
+          } lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-40 transition-transform duration-300 ease-out`}
         >
           <Sidebar
             projects={projects}
@@ -827,7 +827,7 @@ export default function App() {
         {/* Overlay for mobile sidebar */}
         {sidebarOpen && (
           <div
-            className="lg:hidden fixed inset-0 z-30 bg-black/50"
+            className="lg:hidden fixed inset-0 z-30 bg-black/60 backdrop-blur-sm"
             onClick={() => setSidebarOpen(false)}
           />
         )}
@@ -836,8 +836,8 @@ export default function App() {
         <main className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
             {/* Left: Prompt + Code */}
-            <div className="flex flex-col lg:w-1/2 p-4 overflow-auto border-b lg:border-b-0 lg:border-r border-border">
-              <div className="mb-4">
+            <div className="flex flex-col lg:w-1/2 p-5 overflow-auto border-b lg:border-b-0 lg:border-r border-border">
+              <div className="mb-5">
                 {mode === "teacher" ? (
                   <TeacherModePanel
                     prompt={prompt}
@@ -884,11 +884,14 @@ export default function App() {
             </div>
 
             {/* Right: Video Preview + Code Fix */}
-            <div className="lg:w-1/2 p-4 overflow-auto space-y-4">
+            <div className="lg:w-1/2 p-5 overflow-auto space-y-5">
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-2 block">
-                  预览
-                </label>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  <label className="text-[13px] font-medium text-white/60">
+                    预览
+                  </label>
+                </div>
                 <VideoPreview videoUrl={videoUrl} />
               </div>
 

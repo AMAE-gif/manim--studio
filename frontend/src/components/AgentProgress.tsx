@@ -28,24 +28,24 @@ export function AgentProgress({ status, steps, plan, error }: AgentProgressProps
     <div className="space-y-3 animate-fade-in">
       {/* Plan display */}
       {plan && (
-        <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-3.5 space-y-2.5">
+        <div className="bg-white/[0.02] border border-white/[0.06] rounded-[12px] p-4 space-y-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 rounded-lg bg-purple-500/10 flex items-center justify-center">
-              <Film className="h-3.5 w-3.5 text-purple-400" />
+            <div className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center">
+              <Film className="h-3.5 w-3.5 text-purple-400/80" />
             </div>
-            <span className="text-[13px] font-medium text-white/70">{plan.title}</span>
-            <span className="text-[11px] text-white/30 ml-auto">{plan.totalDuration}s</span>
+            <span className="text-[13px] font-semibold text-white/80">{plan.title}</span>
+            <span className="text-[11px] text-white/25 ml-auto font-medium tabular-nums">{plan.totalDuration}s</span>
           </div>
-          <p className="text-[12px] text-white/40 leading-relaxed">{plan.summary}</p>
+          <p className="text-[12px] text-white/35 leading-relaxed">{plan.summary}</p>
           {plan.shots.length > 0 && (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {plan.shots.map((shot) => (
                 <div key={shot.id} className="flex items-start gap-2.5 text-[12px]">
-                  <span className="text-blue-400/60 font-mono shrink-0 mt-0.5">{shot.id}.</span>
+                  <span className="text-blue-400/50 font-mono shrink-0 mt-0.5 text-[11px]">{shot.id}.</span>
                   <div className="min-w-0">
-                    <span className="font-medium text-white/60">{shot.name}</span>
-                    <span className="text-white/25 ml-1.5">({shot.duration}s)</span>
-                    <p className="text-white/30 truncate mt-0.5">{shot.description}</p>
+                    <span className="font-medium text-white/55">{shot.name}</span>
+                    <span className="text-white/20 ml-1.5 text-[11px]">({shot.duration}s)</span>
+                    <p className="text-white/25 truncate mt-0.5 text-[11px]">{shot.description}</p>
                   </div>
                 </div>
               ))}
@@ -55,7 +55,7 @@ export function AgentProgress({ status, steps, plan, error }: AgentProgressProps
       )}
 
       {/* Step progress */}
-      <div className="space-y-1.5">
+      <div className="space-y-1">
         {steps.map((s, i) => {
           const done = s.endedAt !== undefined;
           const running = !done && i === steps.length - 1 && status !== "complete" && status !== "error";
@@ -63,23 +63,23 @@ export function AgentProgress({ status, steps, plan, error }: AgentProgressProps
           return (
             <div
               key={i}
-              className="flex items-center gap-2.5 text-[12px] py-1"
+              className="flex items-center gap-2.5 text-[12px] py-1.5 px-1"
             >
               {done ? (
                 s.passed === false ? (
-                  <AlertCircle className="h-3.5 w-3.5 text-red-400 shrink-0" />
+                  <AlertCircle className="h-3.5 w-3.5 text-red-400/80 shrink-0" />
                 ) : (
-                  <CheckCircle className="h-3.5 w-3.5 text-green-400 shrink-0" />
+                  <CheckCircle className="h-3.5 w-3.5 text-emerald-400/80 shrink-0" />
                 )
               ) : running ? (
-                <Loader2 className="h-3.5 w-3.5 text-blue-400 animate-spin shrink-0" />
+                <Loader2 className="h-3.5 w-3.5 text-blue-400/80 animate-spin shrink-0" />
               ) : (
-                <Circle className="h-3.5 w-3.5 text-white/15 shrink-0" />
+                <Circle className="h-3.5 w-3.5 text-white/10 shrink-0" />
               )}
-              <span className="text-white/30">{STEP_LABELS[s.step] || s.step}</span>
-              <span className="text-white/50 truncate flex-1">{s.message}</span>
+              <span className="text-white/25 font-medium">{STEP_LABELS[s.step] || s.step}</span>
+              <span className="text-white/45 truncate flex-1">{s.message}</span>
               {done && s.endedAt && s.startedAt && (
-                <span className="text-white/20 shrink-0 tabular-nums">
+                <span className="text-white/15 shrink-0 tabular-nums text-[11px]">
                   {((s.endedAt - s.startedAt) / 1000).toFixed(1)}s
                 </span>
               )}
@@ -89,7 +89,7 @@ export function AgentProgress({ status, steps, plan, error }: AgentProgressProps
       </div>
 
       {error && (
-        <div className="flex items-center gap-2.5 text-[12px] text-red-400/80 bg-red-500/[0.08] rounded-xl px-3.5 py-2.5">
+        <div className="flex items-center gap-2.5 text-[12px] text-red-400/70 bg-red-500/[0.06] border border-red-500/10 rounded-[10px] px-3.5 py-2.5">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{error}</span>
         </div>

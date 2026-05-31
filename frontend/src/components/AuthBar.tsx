@@ -60,7 +60,7 @@ export function AuthBar({ session, busy, onStatusChange }: AuthBarProps) {
 
   if (!supabaseReady) {
     return (
-      <div className="px-3 py-2 text-xs text-muted-foreground">
+      <div className="px-4 py-3 text-[11px] text-white/25 border-t border-border">
         未配置 Supabase，可本地使用
       </div>
     );
@@ -68,11 +68,18 @@ export function AuthBar({ session, busy, onStatusChange }: AuthBarProps) {
 
   if (session?.user?.email) {
     return (
-      <div className="flex items-center justify-between px-3 py-2 border-t border-border">
-        <span className="text-xs text-muted-foreground truncate flex-1 mr-2">
-          {session.user.email}
-        </span>
-        <Button variant="ghost" size="sm" onClick={signOut} disabled={busy}>
+      <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+        <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0">
+            <span className="text-[10px] text-white font-semibold">
+              {session.user.email.charAt(0).toUpperCase()}
+            </span>
+          </div>
+          <span className="text-[12px] text-white/50 truncate font-medium">
+            {session.user.email}
+          </span>
+        </div>
+        <Button variant="ghost" size="icon-xs" onClick={signOut} disabled={busy} className="text-white/30 hover:text-white/60">
           <LogOut className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -80,14 +87,14 @@ export function AuthBar({ session, busy, onStatusChange }: AuthBarProps) {
   }
 
   return (
-    <div className="p-3 border-t border-border space-y-2">
+    <div className="p-4 border-t border-border space-y-2.5">
       <Input
         type="email"
         placeholder="邮箱"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         disabled={busy || loading}
-        className="h-8 text-xs"
+        className="h-9 text-[12px]"
         onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
       />
       <Input
@@ -96,13 +103,13 @@ export function AuthBar({ session, busy, onStatusChange }: AuthBarProps) {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         disabled={busy || loading}
-        className="h-8 text-xs"
+        className="h-9 text-[12px]"
         onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
       />
       <Button
         variant="default"
         size="sm"
-        className="w-full h-8 text-xs"
+        className="w-full h-9 text-[12px] rounded-[10px]"
         disabled={busy || loading}
         onClick={handleSubmit}
       >
@@ -113,7 +120,7 @@ export function AuthBar({ session, busy, onStatusChange }: AuthBarProps) {
         )}
       </Button>
       <button
-        className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
+        className="w-full text-[11px] text-white/25 hover:text-white/50 transition-colors font-medium"
         onClick={() => setMode(mode === "login" ? "register" : "login")}
         disabled={loading}
       >
