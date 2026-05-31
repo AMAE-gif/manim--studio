@@ -133,10 +133,8 @@ function guessVisionModel(baseUrl: string): string {
 }
 
 export function resolveVisionConfig(code: LlmConfig, vision: VisionConfig): { apiKey: string; baseUrl: string; model: string; apiFormat: "openai" | "anthropic" } {
-  console.log("resolveVisionConfig input:", { useSameAsCode: vision.useSameAsCode, codeApiKey: code.apiKey ? "***" + code.apiKey.slice(-4) : "(empty)", codeBaseUrl: code.baseUrl, visionApiKey: vision.apiKey ? "***" + vision.apiKey.slice(-4) : "(empty)", visionBaseUrl: vision.baseUrl, visionModel: vision.model });
   if (vision.useSameAsCode) {
     const model = guessVisionModel(code.baseUrl);
-    console.log("resolveVisionConfig useSameAsCode: guessed model =", model || "(empty)");
     if (model) {
       return { apiKey: code.apiKey, baseUrl: code.baseUrl, model, apiFormat: code.apiFormat };
     }

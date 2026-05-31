@@ -160,7 +160,6 @@ export default function App() {
       apiFormat: (freshProvider?.apiFormat as "openai" | "anthropic") || "openai",
     };
     const freshVision = resolveVisionConfig(freshLlmConfig, freshSettings.vision);
-    console.log("onTeacherAnalyze - fresh resolvedVision:", { ...freshVision, apiKey: freshVision.apiKey ? "***" + freshVision.apiKey.slice(-4) : "(empty)" });
 
     if (!freshVision.apiKey) {
       setStatus(`视觉模型 API Key 未配置。代码模型 API Key: ${freshLlmConfig.apiKey ? "已配置" : "未配置"}，视觉 useSameAsCode: ${freshSettings.vision.useSameAsCode}。请在设置中配置。`);
@@ -773,12 +772,6 @@ export default function App() {
   };
 
   const resolvedVision = resolveVisionConfig(llmConfig, visionConfig);
-  // Debug: log vision config on render
-  if (resolvedVision.apiKey) {
-    console.log("resolvedVision:", { model: resolvedVision.model, baseUrl: resolvedVision.baseUrl, apiKey: "***" + resolvedVision.apiKey.slice(-4) });
-  } else {
-    console.log("resolvedVision: API KEY EMPTY!", { visionConfig, llmConfigBaseUrl: llmConfig.baseUrl });
-  }
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
