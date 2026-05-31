@@ -836,7 +836,7 @@ export default function App() {
         <main className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
             {/* Left: Prompt + Code */}
-            <div className="flex flex-col lg:w-1/2 p-5 overflow-auto border-b lg:border-b-0 lg:border-r border-border">
+            <div className="flex flex-col lg:w-[45%] p-5 overflow-auto border-b lg:border-b-0 lg:border-r border-border">
               <div className="mb-5">
                 {mode === "teacher" ? (
                   <TeacherModePanel
@@ -884,13 +884,19 @@ export default function App() {
             </div>
 
             {/* Right: Video Preview + Code Fix */}
-            <div className="lg:w-1/2 p-5 overflow-auto space-y-5">
+            <div className="lg:w-[55%] p-5 overflow-auto space-y-5">
+              {/* Video Preview - Hero section */}
               <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  <label className="text-[13px] font-medium text-white/60">
-                    预览
-                  </label>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <label className="text-[13px] font-medium text-white/60">
+                      动画预览
+                    </label>
+                  </div>
+                  {videoUrl && (
+                    <span className="text-[11px] text-white/20 font-medium">MP4</span>
+                  )}
                 </div>
                 <VideoPreview videoUrl={videoUrl} />
               </div>

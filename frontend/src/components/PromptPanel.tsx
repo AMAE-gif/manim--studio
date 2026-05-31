@@ -1,4 +1,4 @@
-import { Loader2, Sparkles, Play } from "lucide-react";
+import { Loader2, Sparkles, Play, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -10,6 +10,13 @@ interface PromptPanelProps {
   busy: boolean;
   hasCode: boolean;
 }
+
+const EXAMPLE_PROMPTS = [
+  "画一个圆变成正方形，颜色从蓝变红",
+  "展示勾股定理的几何证明",
+  "绘制正弦函数的动态图像",
+  "展示矩阵乘法的可视化过程",
+];
 
 export function PromptPanel({
   prompt,
@@ -27,17 +34,38 @@ export function PromptPanel({
           <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
           <label className="text-[13px] font-medium text-white/60">自然语言描述</label>
         </div>
-        <span className="text-[11px] text-white/25 font-medium tabular-nums">{prompt.length}/4000</span>
+        <span className="text-[11px] text-white/20 font-medium tabular-nums">{prompt.length}/4000</span>
       </div>
 
       {/* Textarea */}
       <Textarea
         value={prompt}
         onChange={(e) => onPromptChange(e.target.value)}
-        placeholder="例如：画一个圆变成正方形，颜色从蓝变红"
+        placeholder="描述你想要的数学动画效果..."
         disabled={busy}
         className="flex-1 resize-none min-h-[120px] text-[13px] leading-relaxed rounded-[12px] border-white/[0.06] bg-white/[0.02] placeholder:text-white/20 focus:border-white/[0.12] focus:bg-white/[0.03] transition-all duration-200"
       />
+
+      {/* Example prompts */}
+      {!prompt && (
+        <div className="mt-3">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Lightbulb className="h-3 w-3 text-white/15" />
+            <span className="text-[11px] text-white/20 font-medium">试试这些例子</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {EXAMPLE_PROMPTS.map((example) => (
+              <button
+                key={example}
+                onClick={() => onPromptChange(example)}
+                className="px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-[11px] text-white/30 hover:text-white/50 hover:bg-white/[0.06] transition-all duration-200"
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex gap-2.5 mt-4">

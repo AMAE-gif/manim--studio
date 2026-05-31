@@ -20,7 +20,10 @@ const modes = [
 
 export function Header({ health, onLlmConfigChange, onVisionChange, mode, onModeChange, accessToken }: HeaderProps) {
   return (
-    <header className="flex items-center justify-between px-6 py-3 border-b border-border glass relative z-50">
+    <header className="flex items-center justify-between px-6 py-3 glass relative z-50">
+      {/* Bottom gradient accent line */}
+      <div className="absolute bottom-0 left-0 right-0 h-px gradient-line" />
+
       {/* Logo */}
       <div className="flex items-center gap-3">
         <div className="flex items-center justify-center w-9 h-9 rounded-[11px] bg-gradient-to-br from-blue-500 via-blue-600 to-purple-600 shadow-lg shadow-blue-500/25 press-effect">
@@ -28,7 +31,7 @@ export function Header({ health, onLlmConfigChange, onVisionChange, mode, onMode
         </div>
         <div className="flex flex-col">
           <h1 className="text-[15px] font-semibold tracking-tight text-white/95 leading-tight">Manim Studio</h1>
-          <span className="text-[10px] text-white/30 font-medium tracking-wide uppercase">NL Studio</span>
+          <span className="text-[10px] text-white/30 font-medium tracking-wide uppercase">AI 动画生成</span>
         </div>
       </div>
 

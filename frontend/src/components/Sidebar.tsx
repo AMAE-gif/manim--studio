@@ -91,12 +91,15 @@ export function Sidebar({
       <ScrollArea className="flex-1">
         <div className="px-3 pb-3 space-y-[3px]">
           {projects.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 px-4">
-              <div className="w-10 h-10 rounded-full bg-white/[0.04] flex items-center justify-center mb-3">
+            <div className="flex flex-col items-center justify-center py-16 px-4">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500/10 to-purple-500/10 flex items-center justify-center mb-4 border border-white/[0.04]">
                 <Plus className="h-5 w-5 text-white/20" />
               </div>
-              <p className="text-[13px] text-white/25 text-center leading-relaxed">
+              <p className="text-[13px] text-white/30 text-center leading-relaxed font-medium">
                 {session ? "暂无项目" : "登录后查看云端项目"}
+              </p>
+              <p className="text-[11px] text-white/15 text-center mt-1">
+                点击上方按钮开始创建
               </p>
             </div>
           ) : (
